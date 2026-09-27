@@ -513,7 +513,8 @@ static void usage(const char *argv0)
 		"  -t, --timeout SEC     idle time before starting (default 300)\n"
 		"  -n, --now             start immediately, exit on input\n"
 		"  -I, --ignore-inhibit  start even when idle is inhibited (e.g. video)\n"
-		"  -h, --help            show this help\n",
+		"  -h, --help            show this help\n"
+		"  -V, --version         show version\n",
 		argv0);
 }
 
@@ -529,11 +530,12 @@ int main(int argc, char **argv)
 		{"now",     no_argument,       NULL, 'n'},
 		{"ignore-inhibit", no_argument,  NULL, 'I'},
 		{"help",    no_argument,       NULL, 'h'},
+		{"version", no_argument, NULL, 'V'},
 		{0, 0, 0, 0},
 	};
 
 	int c;
-	while ((c = getopt_long(argc, argv, "t:nhI", opts, NULL)) != -1) {
+	while ((c = getopt_long(argc, argv, "t:nhIV", opts, NULL)) != -1) {
 		switch (c) {
 		case 't':
 			v->timeout_sec = atoi(optarg);
@@ -543,6 +545,7 @@ int main(int argc, char **argv)
 		case 'n': v->oneshot = true; break;
 		case 'I': respect_inhibit = false; break;
 		case 'h': usage(argv[0]); return 0;
+		case 'V': printf("nebulights 0.1.0\n"); return 0;
 		default:  usage(argv[0]); return 1;
 		}
 	}
