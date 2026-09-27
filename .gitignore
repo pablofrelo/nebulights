@@ -1,0 +1,4 @@
+*.o
+/nebulights
+/src/*-client-protocol.[ch]
+/test/fast

@@ -1,0 +1,1217 @@
+<!DOCTYPE html>
+<html lang="pl">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>nebulights</title>
+<style>
+  html,body{margin:0;height:100%;background:#000;overflow:hidden;
+            font:12px/1.5 ui-monospace,"DejaVu Sans Mono",monospace}
+  canvas{display:block;width:100vw;height:100vh}
+  #ui{position:fixed;left:12px;bottom:12px;color:#7d90b8;
+      background:rgba(2,4,14,.72);border:1px solid #1d2a44;
+      padding:10px 12px;border-radius:4px;user-select:none}
+  #ui div{display:flex;align-items:center;gap:8px;margin:3px 0}
+  #ui label{min-width:62px}
+  #ui input[type=range]{width:112px}
+  #ui button{background:#16233c;color:#9fb4dd;border:1px solid #2c3f63;
+             padding:3px 9px;border-radius:3px;cursor:pointer;font:inherit}
+  #ui button:hover{background:#1e2f4e}
+  #hint{position:fixed;right:12px;bottom:12px;color:#3d4a66}
+</style>
+
+<canvas id="c"></canvas>
+<div id="ui">
+  <div><label>tempo</label><input id="speed" type="range" min="0" max="250" value="100"><span id="speedv">1.0×</span></div>
+  <div><label>ogon</label><input id="trail" type="range" min="6" max="45" value="22"><span id="trailv">2.2 s</span></div>
+  <div><label>mgła</label><input id="mist" type="range" min="0" max="200" value="100"><span id="mistv">1.0×</span></div>
+  <div><label>barwy</label><input id="hue" type="range" min="0" max="250" value="100"><span id="huev">1.0×</span></div>
+  <div><label>tło</label><input id="neb" type="range" min="0" max="400" value="100"><span id="nebv">1.0×</span></div>
+  <div><label>poświata</label><input id="bloom" type="range" min="0" max="300" value="100"><span id="bloomv">1.0×</span></div>
+  <div><label>jasność</label><input id="expo" type="range" min="15" max="300" value="100"><span id="expov">1.0×</span></div>
+  <div><label>tęcza</label><input id="fringe" type="range" min="0" max="40" value="10"><span id="fringev">0.010</span></div>
+  <div><label>gęstość</label><input id="dens" type="range" min="15" max="100" value="100"><span id="densv">100%</span></div>
+  <div><label>scena</label><span id="stat">—</span></div>
+  <div><button id="boom">eksplozja</button><button id="pair">+ para</button><button id="trio">+ trójka</button><button id="reset">reset</button></div>
+</div>
+<div id="hint">H — panel</div>
+
+<script>
+"use strict";
+const rnd=Math.random, rnd2=()=>Math.random()*2-1, TAU=Math.PI*2;
+const pick=a=>a[(Math.random()*a.length)|0];
+
+/* ================= macierze ====================================== */
+function mPersp(m,f_,asp,zn,zf){const f=1/Math.tan(f_*0.5);m.fill(0);
+  m[0]=f/asp;m[5]=f;m[10]=(zf+zn)/(zn-zf);m[11]=-1;m[14]=2*zf*zn/(zn-zf);}
+function mLookAt(m,e,c,u){
+  let f=[c[0]-e[0],c[1]-e[1],c[2]-e[2]];let l=Math.hypot(f[0],f[1],f[2]);f=[f[0]/l,f[1]/l,f[2]/l];
+  let s=[f[1]*u[2]-f[2]*u[1],f[2]*u[0]-f[0]*u[2],f[0]*u[1]-f[1]*u[0]];
+  l=Math.hypot(s[0],s[1],s[2])||1;s=[s[0]/l,s[1]/l,s[2]/l];
+  const v=[s[1]*f[2]-s[2]*f[1],s[2]*f[0]-s[0]*f[2],s[0]*f[1]-s[1]*f[0]];
+  m.fill(0);m[15]=1;
+  m[0]=s[0];m[4]=s[1];m[8]=s[2];
+  m[1]=v[0];m[5]=v[1];m[9]=v[2];
+  m[2]=-f[0];m[6]=-f[1];m[10]=-f[2];
+  m[12]=-(s[0]*e[0]+s[1]*e[1]+s[2]*e[2]);
+  m[13]=-(v[0]*e[0]+v[1]*e[1]+v[2]*e[2]);
+  m[14]=(f[0]*e[0]+f[1]*e[1]+f[2]*e[2]);}
+function mMul(a,b,o){const r=new Float32Array(16);
+  for(let c=0;c<4;c++)for(let i=0;i<4;i++)
+    r[c*4+i]=a[i]*b[c*4]+a[4+i]*b[c*4+1]+a[8+i]*b[c*4+2]+a[12+i]*b[c*4+3];
+  o.set(r);}
+
+function perpBasis(d,u,v){
+  const ax=Math.abs(d[0])<0.8?[1,0,0]:[0,1,0];
+  u[0]=d[1]*ax[2]-d[2]*ax[1];
+  u[1]=d[2]*ax[0]-d[0]*ax[2];
+  u[2]=d[0]*ax[1]-d[1]*ax[0];
+  const ul=Math.hypot(u[0],u[1],u[2])||1;u[0]/=ul;u[1]/=ul;u[2]/=ul;
+  v[0]=d[1]*u[2]-d[2]*u[1];
+  v[1]=d[2]*u[0]-d[0]*u[2];
+  v[2]=d[0]*u[1]-d[1]*u[0];
+}
+
+/* ================= barwy ========================================= */
+/* pełne nasycenie, wędrujący odcień — stąd psychodelia */
+function hsv(h,s,v,out){
+  h=((h%1)+1)%1;
+  const i=Math.floor(h*6), f=h*6-i;
+  const p=v*(1-s), q=v*(1-s*f), t=v*(1-s*(1-f));
+  switch(i%6){
+    case 0: out[0]=v;out[1]=t;out[2]=p;break;
+    case 1: out[0]=q;out[1]=v;out[2]=p;break;
+    case 2: out[0]=p;out[1]=v;out[2]=t;break;
+    case 3: out[0]=p;out[1]=q;out[2]=v;break;
+    case 4: out[0]=t;out[1]=p;out[2]=v;break;
+    default:out[0]=v;out[1]=p;out[2]=q;
+  }
+  return out;
+}
+
+/* ================= grawitacja ==================================== */
+const SOFT2=1.6*1.6;      /* zmiękczenie => orbity powoli precesują */
+const R_PERI_MIN=9.5;     /* zapas na dryf kamery — inaczej wchodzą w obiektyw */
+const R_APO_MAX =46.0;
+
+/* Środkiem masy jest sam obserwator. Kamera stoi w zerze i tylko się
+   obraca — obrót nie przesuwa atraktora, więc orbity zostają czyste.
+   Efekt: nie patrzysz na rój z zewnątrz, tylko siedzisz w jego środku. */
+const HOLE={p:[0,0,0], gm:420};
+function seedAttractors(){ /* nic do rozstawiania */ }
+
+function gravStep(a,dt){
+  const at=a.att.p;
+  const dx=a.pos[0]-at[0], dy=a.pos[1]-at[1], dz=a.pos[2]-at[2];
+  const s=dx*dx+dy*dy+dz*dz+SOFT2;
+  const acc=-a.att.gm/(s*Math.sqrt(s));
+  a.vel[0]+=dx*acc*dt;
+  a.vel[1]+=dy*acc*dt;
+  a.vel[2]+=dz*acc*dt;
+  const px=a.pos[0],py=a.pos[1],pz=a.pos[2];
+  a.pos[0]+=a.vel[0]*dt; a.pos[1]+=a.vel[1]*dt; a.pos[2]+=a.vel[2]*dt;
+  return Math.hypot(a.pos[0]-px,a.pos[1]-py,a.pos[2]-pz);
+}
+
+/* orbita: r0 = punkt startowy, k = ułamek prędkości kołowej.
+   k=1 → okrąg, k<1 → r0 jest apocentrum, k>1 → perycentrum.
+   Małe k daje wydłużone elipsy, których fragment wygląda jak prosta. */
+function initOrbit(a,r0,k){
+  const at=a.att.p;
+  const u=[rnd2(),rnd2(),rnd2()];
+  const ul=Math.hypot(u[0],u[1],u[2])||1;
+  u[0]/=ul;u[1]/=ul;u[2]/=ul;
+
+  const t1=[0,0,0], t2=[0,0,0];
+  perpBasis(u,t1,t2);
+  const ang=rnd()*TAU;            /* losowa płaszczyzna orbity */
+  const w=[t1[0]*Math.cos(ang)+t2[0]*Math.sin(ang),
+           t1[1]*Math.cos(ang)+t2[1]*Math.sin(ang),
+           t1[2]*Math.cos(ang)+t2[2]*Math.sin(ang)];
+
+  a.pos=[at[0]+u[0]*r0, at[1]+u[1]*r0, at[2]+u[2]*r0];
+  const vc=Math.sqrt(a.att.gm/Math.sqrt(r0*r0+SOFT2))*k;
+  a.vel=[w[0]*vc,w[1]*vc,w[2]*vc];
+}
+
+/* Orbita wokół obserwatora. Perycentrum nie może być zbyt małe, bo
+   obiekt przeleciałby przez płaszczyznę bliską i zniknął z hukiem. */
+function randomOrbit(a){
+  a.att=HOLE;
+  for(let i=0;i<40;i++){
+    const r0=7+rnd()*34;
+    const k = rnd()<0.45 ? 0.45+rnd()*0.34     /* wydłużona, "prosta" */
+                         : 0.82+rnd()*0.40;    /* bliżej okręgu       */
+    /* dla k<1 punkt startu jest apocentrum, dla k>1 perycentrum */
+    const other=r0*(k*k)/Math.max(0.12,2-k*k);
+    const peri=Math.min(r0,other), apo=Math.max(r0,other);
+    if(peri<R_PERI_MIN || apo>R_APO_MAX) continue;
+    initOrbit(a,r0,k);
+    return;
+  }
+  initOrbit(a,16+rnd()*12,0.95);              /* awaryjnie: prawie okrąg */
+}
+
+/* ---- wloty zza kadru ------------------------------------------- */
+/* Obiekt nigdy nie materializuje się w polu widzenia: losujemy orbitę
+   tak długo, aż punkt startu wypada poza ekranem. Reszta to już
+   grawitacja — sam wleci w kadr. */
+let curVP=null, camEye=[0,0,30];
+function onScreen(p,margin){
+  if(!curVP) return false;
+  const m=curVP;
+  const w=m[3]*p[0]+m[7]*p[1]+m[11]*p[2]+m[15];
+  if(w<=0.05) return false;                  /* za kamerą = poza kadrem */
+  const x=m[0]*p[0]+m[4]*p[1]+m[8]*p[2]+m[12];
+  const y=m[1]*p[0]+m[5]*p[1]+m[9]*p[2]+m[13];
+  return Math.abs(x)<=w*margin && Math.abs(y)<=w*margin;
+}
+/* Baza prostopadła do kierunku lotu liczona od zera potrafi skokowo
+   obrócić się o 90 stopni, gdy prowadzący zmieni kierunek — członkowie
+   teleportowali się wtedy na drugą stronę. Zamiast tego przenosimy
+   poprzednią bazę: odejmujemy składową wzdłuż nowego kierunku. */
+function carryBasis(g,ld){
+  let ux=g.u[0],uy=g.u[1],uz=g.u[2];
+  const dot=ux*ld[0]+uy*ld[1]+uz*ld[2];
+  ux-=ld[0]*dot; uy-=ld[1]*dot; uz-=ld[2]*dot;
+  const l=Math.hypot(ux,uy,uz);
+  if(l<1e-4){ perpBasis(ld,g.u,g.v); return; }
+  g.u[0]=ux/l; g.u[1]=uy/l; g.u[2]=uz/l;
+  g.v[0]=ld[1]*g.u[2]-ld[2]*g.u[1];
+  g.v[1]=ld[2]*g.u[0]-ld[0]*g.u[2];
+  g.v[2]=ld[0]*g.u[1]-ld[1]*g.u[0];
+}
+
+function respawnOffscreen(a){
+  for(let i=0;i<60;i++){
+    randomOrbit(a);
+    /* Tuż obok kamery nawet mały odskok członka układu wrzuca go
+       w kadr — wymagamy dystansu. */
+    const dc=Math.hypot(a.pos[0]-camEye[0],a.pos[1]-camEye[1],a.pos[2]-camEye[2]);
+    if(dc<12) continue;
+    /* margines z zapasem na promień krążenia w układach */
+    if(!onScreen(a.pos,1.22)) return true;
+  }
+  return false;                              /* poddajemy się po 60 próbach */
+}
+
+/* ================= iskry, para, mgła ============================= */
+const MAX_SPARK=110000;
+const kx=new Float32Array(MAX_SPARK), ky=new Float32Array(MAX_SPARK), kz=new Float32Array(MAX_SPARK);
+const kvx=new Float32Array(MAX_SPARK), kvy=new Float32Array(MAX_SPARK), kvz=new Float32Array(MAX_SPARK);
+const kr=new Float32Array(MAX_SPARK), kg=new Float32Array(MAX_SPARK), kb=new Float32Array(MAX_SPARK);
+const ks=new Float32Array(MAX_SPARK), kl=new Float32Array(MAX_SPARK), kl0=new Float32Array(MAX_SPARK);
+const kgrow=new Float32Array(MAX_SPARK);
+let sparkN=0;
+
+function addSpark(x,y,z,vx,vy,vz,col,life,size,grow){
+  if(sparkN>=MAX_SPARK) return;
+  const i=sparkN++;
+  kx[i]=x;ky[i]=y;kz[i]=z;kvx[i]=vx;kvy[i]=vy;kvz[i]=vz;
+  kr[i]=col[0];kg[i]=col[1];kb[i]=col[2];
+  ks[i]=size;kl[i]=life;kl0[i]=life;kgrow[i]=grow||0;
+}
+function stepSparks(dt){
+  let w=0;
+  for(let i=0;i<sparkN;i++){
+    kl[i]-=dt;
+    if(kl[i]<=0) continue;
+    kx[i]+=kvx[i]*dt;ky[i]+=kvy[i]*dt;kz[i]+=kvz[i]*dt;
+    const drag=kgrow[i]>0?1-1.9*dt:1-1.4*dt;
+    kvx[i]*=drag;kvy[i]*=drag;kvz[i]*=drag;
+    if(w!==i){
+      kx[w]=kx[i];ky[w]=ky[i];kz[w]=kz[i];
+      kvx[w]=kvx[i];kvy[w]=kvy[i];kvz[w]=kvz[i];
+      kr[w]=kr[i];kg[w]=kg[i];kb[w]=kb[i];
+      ks[w]=ks[i];kl[w]=kl[i];kl0[w]=kl0[i];kgrow[w]=kgrow[i];
+    }
+    w++;
+  }
+  sparkN=w;
+}
+function addMist(x,y,z,col,scale){
+  addSpark(x+rnd2()*0.3,y+rnd2()*0.3,z+rnd2()*0.3,
+           rnd2()*0.3,rnd2()*0.3,rnd2()*0.3,
+           col,(0.9+rnd()*1.1)*scale,5+rnd()*7,2.4+rnd()*2.2);
+}
+function explode(x,y,z,col){
+  addSpark(x,y,z,0,0,0,[1,1,1],0.55,42,0);
+  addSpark(x,y,z,0,0,0,col,0.9,26,0);
+  const n=110+((rnd()*90)|0);
+  for(let i=0;i<n;i++){
+    let dx=rnd2(),dy=rnd2(),dz=rnd2();
+    const l=Math.hypot(dx,dy,dz)||1,s=1.6+rnd()*5.5;
+    addSpark(x,y,z,dx/l*s,dy/l*s,dz/l*s,
+             rnd()<0.35?[1,1,1]:col,0.7+rnd()*1.8,1.6+rnd()*3.2,0);
+  }
+  for(let i=0;i<26;i++) addMist(x,y,z,col,1.6);
+}
+/* Wybuch na drugim planie — daleko, więc rozchodzi się wolno i długo.
+   Powłoka jest rzadka i duża, żeby czytała się jako zdarzenie w tle,
+   a nie jako coś, co zaraz na nas spadnie. */
+function farBurst(x,y,z,hue){
+  const c=[0,0,0]; hsv(hue,0.85,1.0,c);
+  const r=Math.hypot(x,y,z)||1;
+  const scale=r/70;                       /* dalej => większe i wolniejsze */
+
+  addSpark(x,y,z,0,0,0,[1.6,1.5,1.3],0.9,60*scale,0);
+  addSpark(x,y,z,0,0,0,[c[0]*1.3,c[1]*1.3,c[2]*1.3],1.7,40*scale,0);
+
+  /* powłoka uderzeniowa */
+  const n=180+((rnd()*120)|0);
+  for(let i=0;i<n;i++){
+    let dx=rnd2(),dy=rnd2(),dz=rnd2();
+    const l=Math.hypot(dx,dy,dz)||1;
+    const s=(5+rnd()*11)*scale;
+    addSpark(x,y,z,dx/l*s,dy/l*s,dz/l*s,
+             rnd()<0.3?[0.9,0.85,0.75]:c,
+             2.6+rnd()*3.6, (5+rnd()*10)*scale, 0);
+  }
+  /* i kłąb, który zostaje po wszystkim */
+  for(let i=0;i<34;i++)
+    addSpark(x+gaussN()*3*scale, y+gaussN()*3*scale, z+gaussN()*3*scale,
+             gaussN()*0.5, gaussN()*0.5, gaussN()*0.5,
+             [c[0]*0.5,c[1]*0.5,c[2]*0.5],
+             3.5+rnd()*4.0, (26+rnd()*34)*scale, 2.2+rnd()*2.0);
+}
+
+function microBurst(x,y,z,col){
+  addSpark(x,y,z,0,0,0,[1,1,1],0.22,14,0);
+  for(let i=0;i<16;i++){
+    let dx=rnd2(),dy=rnd2(),dz=rnd2();
+    const l=Math.hypot(dx,dy,dz)||1,s=0.8+rnd()*2.2;
+    addSpark(x,y,z,dx/l*s,dy/l*s,dz/l*s,col,0.3+rnd()*0.6,1.2+rnd()*2.0,0);
+  }
+}
+
+/* ================= lotniki ======================================= */
+/* Gęstsze próbkowanie => wstęgi gładkie na ciasnych zakrętach.
+   Sufit próbek musi pokryć najdłuższy ogon przy największej prędkości. */
+const SAMPLE_STEP=0.07;
+const MAX_SAMPLES=1400;
+const MAX_FLYERS=190;
+let TRAIL_LIFE=2.2, MIST_MUL=1.0, HUE_MUL=1.0, NEB_MUL=1.0;
+let DENSITY=1.0;   /* ułamek czynnych obiektów — do dławienia na słabszym sprzęcie */
+let BLOOM_MUL=1.0;
+let EXPOSURE=1.0, FRINGE=0.010;
+
+const R_THREAD=0, R_SPARK=1, R_VAPOR=2, R_BEAD=3, R_TUBE=4;
+
+const flyers=[], groups=[];
+
+function newTrail(){
+  return {
+    sx:new Float32Array(MAX_SAMPLES), sy:new Float32Array(MAX_SAMPLES),
+    sz:new Float32Array(MAX_SAMPLES), sa:new Float32Array(MAX_SAMPLES),
+    /* barwa zapamiętana w chwili emisji => ogon jest gradientem */
+    scr:new Float32Array(MAX_SAMPLES), scg:new Float32Array(MAX_SAMPLES),
+    scb:new Float32Array(MAX_SAMPLES),
+    n:0, acc:0,
+  };
+}
+
+function makeFlyer(ribbon,hue,hueRate){
+  const rb = ribbon!==undefined?ribbon
+           : pick([R_THREAD,R_THREAD,R_SPARK,R_SPARK,R_VAPOR,R_VAPOR,R_BEAD,R_TUBE]);
+  const f=Object.assign(newTrail(),{
+    ribbon:rb,
+    hue: hue!==undefined?hue:rnd(),
+    /* różne tempa wędrówki barwy — część wolno, część agresywnie */
+    hueRate: hueRate!==undefined?hueRate:(rnd()<0.4?0.010+rnd()*0.030:0.055+rnd()*0.14),
+    col:[1,1,1],
+    width: rb===R_TUBE ?0.22+rnd()*0.20
+         : rb===R_THREAD?0.040+rnd()*0.040
+         : rb===R_VAPOR ?0.070+rnd()*0.055
+         : rb===R_BEAD  ?0.045+rnd()*0.035
+         :               0.055+rnd()*0.050,
+    pos:[0,0,0], vel:[0,0,0], dir:[1,0,0],
+    beadAcc:0, mistAcc:0, sparkAcc:0,
+    headGlow:1,
+    fuse:11+rnd()*28,
+    group:null, gIndex:0, slot:0, waiting:false,
+  });
+  f.slot=flyers.length;
+  hsv(f.hue,1.0,1.0,f.col);
+  randomOrbit(f);
+  f.sx[0]=f.pos[0];f.sy[0]=f.pos[1];f.sz[0]=f.pos[2];
+  f.scr[0]=f.col[0];f.scg[0]=f.col[1];f.scb[0]=f.col[2];
+  f.sa[0]=0;f.n=1;
+  flyers.push(f);
+  return f;
+}
+
+function makeGroup(count){
+  const lead={pos:[0,0,0],vel:[0,0,0]};
+  randomOrbit(lead);
+  const g={
+    lead, members:[],
+    radius:0.6+rnd()*1.5,
+    /* każda para/trójka wiruje we własnym tempie i kierunku */
+    omega:(0.7+rnd()*4.2)*(rnd()<0.5?-1:1),
+    phase:rnd()*TAU,
+    fuse:15+rnd()*30,
+    u:[0,0,0], v:[0,0,0],
+  };
+  const h0=rnd(), spread=0.16+rnd()*0.22;
+  const rate=rnd()<0.4?0.012+rnd()*0.030:0.05+rnd()*0.13;
+  for(let i=0;i<count;i++){
+    const f=makeFlyer(pick([R_THREAD,R_SPARK,R_VAPOR,R_THREAD]),
+                      h0+i*spread, rate);
+    f.group=g; f.gIndex=i;
+    g.members.push(f);
+  }
+  /* Od razu na pozycjach orbitalnych wokół prowadzącego — inaczej
+     pierwszy krok symulacji teleportowałby ich z losowych miejsc. */
+  const vl=Math.hypot(lead.vel[0],lead.vel[1],lead.vel[2])||1;
+  perpBasis([lead.vel[0]/vl,lead.vel[1]/vl,lead.vel[2]/vl],g.u,g.v);
+  g.members.forEach((f,i)=>{
+    const a=g.phase+i*TAU/count;
+    const ca=Math.cos(a)*g.radius, sa=Math.sin(a)*g.radius;
+    f.pos=[lead.pos[0]+g.u[0]*ca+g.v[0]*sa,
+           lead.pos[1]+g.u[1]*ca+g.v[1]*sa,
+           lead.pos[2]+g.u[2]*ca+g.v[2]*sa];
+    resetTrail(f);
+  });
+  groups.push(g);
+  return g;
+}
+
+function pushSample(f){
+  if(f.n>=MAX_SAMPLES){
+    f.sx.copyWithin(0,1);f.sy.copyWithin(0,1);f.sz.copyWithin(0,1);
+    f.sa.copyWithin(0,1);f.scr.copyWithin(0,1);f.scg.copyWithin(0,1);f.scb.copyWithin(0,1);
+    f.n--;
+  }
+  const i=f.n++;
+  f.sx[i]=f.pos[0];f.sy[i]=f.pos[1];f.sz[i]=f.pos[2];f.sa[i]=0;
+  f.scr[i]=f.col[0];f.scg[i]=f.col[1];f.scb[i]=f.col[2];
+}
+
+function resetTrail(f){
+  f.n=0;f.acc=0;
+  f.sx[0]=f.pos[0];f.sy[0]=f.pos[1];f.sz[0]=f.pos[2];f.sa[0]=0;
+  f.scr[0]=f.col[0];f.scg[0]=f.col[1];f.scb[0]=f.col[2];
+  f.n=1;
+}
+
+function flyerTail(f,t,dt,step){
+  /* wędrówka odcienia */
+  f.hue+=f.hueRate*HUE_MUL*dt;
+  hsv(f.hue,1.0,1.0,f.col);
+
+  f.acc+=step;
+  while(f.acc>=SAMPLE_STEP){ f.acc-=SAMPLE_STEP; pushSample(f); }
+
+  for(let i=0;i<f.n;i++) f.sa[i]+=dt;
+  while(f.n>1 && f.sa[0]>TRAIL_LIFE){
+    f.sx.copyWithin(0,1);f.sy.copyWithin(0,1);f.sz.copyWithin(0,1);
+    f.sa.copyWithin(0,1);f.scr.copyWithin(0,1);f.scg.copyWithin(0,1);f.scb.copyWithin(0,1);
+    f.n--;
+  }
+
+  const bx=f.pos[0],by=f.pos[1],bz=f.pos[2];
+
+  /* ISKRY — sypią się z samego obiektu, na wszystkie strony,
+     krótko żyją, więc trzymają się przy nim */
+  if(f.ribbon===R_SPARK){
+    f.sparkAcc+=dt*70;
+    let n=f.sparkAcc|0; f.sparkAcc-=n;
+    if(n>4) n=4;
+    for(let i=0;i<n;i++){
+      let dx=rnd2(),dy=rnd2(),dz=rnd2();
+      const l=Math.hypot(dx,dy,dz)||1, s=1.8+rnd()*3.4;
+      addSpark(bx,by,bz,
+               dx/l*s+f.vel[0]*0.12, dy/l*s+f.vel[1]*0.12, dz/l*s+f.vel[2]*0.12,
+               rnd()<0.3?[1,1,1]:f.col, 0.22+rnd()*0.34, 1.3+rnd()*2.0, 0);
+    }
+  }
+  /* koraliki wzdłuż toru */
+  if(f.ribbon===R_BEAD){
+    f.beadAcc+=step;
+    if(f.beadAcc>0.5){ f.beadAcc=0;
+      addSpark(bx,by,bz,0,0,0,f.col,1.6,4.5+rnd()*2.5,0); }
+  }
+
+  /* PARA / DYM — wyłącznie z ogona, nie z obiektu */
+  if(MIST_MUL>0 && f.n>4){
+    const rate=(f.ribbon===R_VAPOR?26:9)*MIST_MUL;
+    f.mistAcc+=dt*rate;
+    let n=f.mistAcc|0; f.mistAcc-=n;
+    if(n>6) n=6;
+    for(let i=0;i<n;i++){
+      /* losowa próbka ze starszej części ogona */
+      const j=(rnd()*Math.max(1,f.n-2))|0;
+      addMist(f.sx[j],f.sy[j],f.sz[j],
+              [f.scr[j],f.scg[j],f.scb[j]],
+              f.ribbon===R_VAPOR?1.0:0.7);
+    }
+  }
+  f.headGlow=0.85+0.35*Math.sin(t*7+f.hue*10);
+}
+
+function activeCount(){ return Math.max(4,Math.round(flyers.length*DENSITY)); }
+function sleeping(f){ return f.slot>=activeCount(); }
+
+function stepAll(t,dt){
+  for(const f of flyers){
+    if(f.group) continue;
+    if(sleeping(f)) continue;
+    if(f.waiting){
+      /* nie znaleźliśmy jeszcze miejsca poza kadrem — czekamy w ukryciu,
+         kamera się przesuwa, więc za chwilę się uda */
+      if(respawnOffscreen(f)){ f.waiting=false; resetTrail(f); }
+      continue;
+    }
+    const step=gravStep(f,dt);
+    const vl=Math.hypot(f.vel[0],f.vel[1],f.vel[2])||1;
+    f.dir[0]=f.vel[0]/vl;f.dir[1]=f.vel[1]/vl;f.dir[2]=f.vel[2]/vl;
+    flyerTail(f,t,dt,step);
+
+    f.fuse-=dt;
+    if(f.fuse<=0){
+      explode(f.pos[0],f.pos[1],f.pos[2],f.col);
+      f.fuse=13+rnd()*30;
+      f.hue=rnd();
+      hsv(f.hue,1.0,1.0,f.col);
+      f.waiting=!respawnOffscreen(f);
+      resetTrail(f);
+    }
+  }
+
+  for(const g of groups){
+    if(sleeping(g.members[0])) continue;
+    if(g.waiting){
+      if(respawnOffscreen(g.lead)){
+        g.waiting=false;
+        for(const f of g.members){
+          f.pos=[g.lead.pos[0],g.lead.pos[1],g.lead.pos[2]];
+          resetTrail(f);
+        }
+      }
+      continue;
+    }
+    gravStep(g.lead,dt);
+    const vl=Math.hypot(g.lead.vel[0],g.lead.vel[1],g.lead.vel[2])||1;
+    const ld=[g.lead.vel[0]/vl,g.lead.vel[1]/vl,g.lead.vel[2]/vl];
+    carryBasis(g,ld);
+    g.phase+=g.omega*dt;
+
+    const n=g.members.length;
+    for(let i=0;i<n;i++){
+      const f=g.members[i];
+      const a=g.phase+i*TAU/n;
+      const ca=Math.cos(a)*g.radius, sa=Math.sin(a)*g.radius;
+      const nx=g.lead.pos[0]+g.u[0]*ca+g.v[0]*sa;
+      const ny=g.lead.pos[1]+g.u[1]*ca+g.v[1]*sa;
+      const nz=g.lead.pos[2]+g.u[2]*ca+g.v[2]*sa;
+      let dx=nx-f.pos[0],dy=ny-f.pos[1],dz=nz-f.pos[2];
+      const dl=Math.hypot(dx,dy,dz);
+      if(dl>1e-6){f.dir[0]=dx/dl;f.dir[1]=dy/dl;f.dir[2]=dz/dl;}
+      f.vel[0]=dl>1e-6?dx/dt:0; f.vel[1]=dl>1e-6?dy/dt:0; f.vel[2]=dl>1e-6?dz/dt:0;
+      f.pos[0]=nx;f.pos[1]=ny;f.pos[2]=nz;
+      flyerTail(f,t,dt,dl);
+    }
+
+    g.fuse-=dt;
+    if(g.fuse<=0){
+      g.fuse=17+rnd()*32;
+      for(const f of g.members) explode(f.pos[0],f.pos[1],f.pos[2],f.col);
+      g.waiting=!respawnOffscreen(g.lead);
+      g.radius=0.6+rnd()*1.5;
+      g.omega=(0.7+rnd()*4.2)*(rnd()<0.5?-1:1);
+      const h0=rnd(), spread=0.16+rnd()*0.22;
+      g.members.forEach((f,i)=>{
+        f.hue=h0+i*spread;
+        hsv(f.hue,1.0,1.0,f.col);
+        f.pos=[g.lead.pos[0],g.lead.pos[1],g.lead.pos[2]];
+        resetTrail(f);
+      });
+    }
+  }
+}
+
+/* ================= gwiazdy tła =================================== */
+const N_BG=9000;
+const bg=new Float32Array(N_BG*7);
+function seedBG(){
+  for(let i=0;i<N_BG;i++){
+    let d=[rnd2(),rnd2(),rnd2()];
+    const l=Math.hypot(d[0],d[1],d[2])||1, r=110+rnd()*40;
+    const b=0.16+Math.pow(rnd(),2.4)*0.85;
+    const warm=rnd()<0.25;
+    bg[i*7]=d[0]/l*r;bg[i*7+1]=d[1]/l*r;bg[i*7+2]=d[2]/l*r;
+    bg[i*7+3]=b*(warm?1.0:0.82);
+    bg[i*7+4]=b*(warm?0.86:0.88);
+    bg[i*7+5]=b*(warm?0.70:1.0);
+    bg[i*7+6]=0.9+rnd()*1.9;
+  }
+}
+
+/* ================= mgławice tła ================================== */
+/* Wielkie, bardzo ciemne obłoki daleko za akcją. Nie ruszają się —
+   ruch daje im obrót kamery. Każdy oddycha własnym rytmem, żeby tło
+   nie było martwą tapetą. */
+const N_NEB=2400;
+const nebPos=new Float32Array(N_NEB*3);
+const nebCol=new Float32Array(N_NEB*3);
+const nebR=new Float32Array(N_NEB);        /* promień w jednostkach świata */
+const nebPhase=new Float32Array(N_NEB);
+const nebRate=new Float32Array(N_NEB);
+
+function seedNebulae(){
+  /* kilka skupisk zamiast równomiernej sieczki — obłoki mają kształt */
+  const clumps=5+((rnd()*4)|0);
+  const centers=[];
+  for(let c=0;c<clumps;c++){
+    let d=[rnd2(),rnd2(),rnd2()];
+    const l=Math.hypot(d[0],d[1],d[2])||1, r=62+rnd()*46;
+    centers.push({
+      p:[d[0]/l*r,d[1]/l*r,d[2]/l*r],
+      hue:rnd(),
+      spread:16+rnd()*26,
+    });
+  }
+  const c3=[0,0,0];
+  for(let i=0;i<N_NEB;i++){
+    const c=centers[(rnd()*centers.length)|0];
+    nebPos[i*3]  =c.p[0]+gaussN()*c.spread;
+    nebPos[i*3+1]=c.p[1]+gaussN()*c.spread;
+    nebPos[i*3+2]=c.p[2]+gaussN()*c.spread;
+    /* rozrzut potrafi wepchnąć obłok w strefę lotów (apocentrum 46) —
+       taki kolos pochłonąłby całą akcję, więc wypychamy go na zewnątrz */
+    const rr=Math.hypot(nebPos[i*3],nebPos[i*3+1],nebPos[i*3+2])||1;
+    if(rr<58){
+      const k=58/rr;
+      nebPos[i*3]*=k; nebPos[i*3+1]*=k; nebPos[i*3+2]*=k;
+    }
+    hsv(c.hue+rnd2()*0.07, 0.75+rnd()*0.25, 1.0, c3);
+    const b=0.006+Math.pow(rnd(),2.0)*0.026;
+    nebCol[i*3]=c3[0]*b; nebCol[i*3+1]=c3[1]*b; nebCol[i*3+2]=c3[2]*b;
+    /* promień w jednostkach świata — billboard, więc bez limitu pikseli */
+    nebR[i]=16+rnd()*54;
+    nebPhase[i]=rnd()*TAU;
+    nebRate[i]=0.05+rnd()*0.16;
+  }
+}
+function gaussN(){ let s=0; for(let i=0;i<3;i++) s+=rnd2(); return s*0.577; }
+
+/* ================= WebGL ========================================= */
+const cv=document.getElementById("c");
+const gl=cv.getContext("webgl",{antialias:false,alpha:false,depth:false});
+if(!gl) document.body.innerHTML="<p style='color:#c66;padding:2em'>Brak WebGL.</p>";
+
+function sh(t,s){const o=gl.createShader(t);gl.shaderSource(o,s);gl.compileShader(o);
+  if(!gl.getShaderParameter(o,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(o));return o;}
+function link(v,f,a){const p=gl.createProgram();
+  gl.attachShader(p,sh(gl.VERTEX_SHADER,v));gl.attachShader(p,sh(gl.FRAGMENT_SHADER,f));
+  a.forEach((n,i)=>gl.bindAttribLocation(p,i,n));gl.linkProgram(p);
+  if(!gl.getProgramParameter(p,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(p));return p;}
+
+const VS_RIB=`
+attribute vec3 aPos; attribute vec3 aCol; attribute vec3 aOff; attribute float aSide;
+uniform mat4 uMVP; uniform float uWidth, uGain;
+varying vec3 vCol; varying float vSide;
+void main(){
+  gl_Position=uMVP*vec4(aPos+aOff*uWidth,1.0);
+  vCol=aCol*uGain;
+  vSide=aSide;
+}`;
+const FS_RIB=`
+precision highp float;
+varying vec3 vCol; varying float vSide;
+uniform float uSoft, uHeat;
+void main(){
+  float s2=vSide*vSide;
+  float a=exp(-s2*uSoft);
+  /* Wąska oś wstęgi jest gorętsza od brzegów — rozjaśniamy ją ku bieli
+     proporcjonalnie do własnej jasności, jak rozgrzany metal. */
+  float core=exp(-s2*uSoft*7.0);
+  float lum=max(max(vCol.r,vCol.g),vCol.b);
+  gl_FragColor=vec4(vCol*a + vec3(lum)*core*uHeat, 1.0);
+}`;
+
+const VS_PTS=`
+attribute vec3 aPos; attribute vec3 aCol; attribute float aSize;
+uniform mat4 uMVP; uniform float uScale;
+varying vec3 vCol;
+void main(){
+  gl_Position=uMVP*vec4(aPos,1.0);
+  float w=max(gl_Position.w,0.15);
+  gl_PointSize=clamp(aSize*uScale/w,1.0,260.0);
+  vCol=aCol;
+}`;
+const FS_PTS=`
+precision highp float;
+varying vec3 vCol;
+void main(){
+  vec2 d=gl_PointCoord-vec2(0.5);
+  float r2=dot(d,d);
+  if(r2>0.25) discard;
+  gl_FragColor=vec4(vCol*(exp(-r2*13.0)*0.72+smoothstep(0.020,0.0,r2)*1.45),1.0);
+}`;
+const FS_MIST=`
+precision highp float;
+varying vec3 vCol;
+void main(){
+  vec2 d=gl_PointCoord-vec2(0.5);
+  float r2=dot(d,d);
+  if(r2>0.25) discard;
+  gl_FragColor=vec4(vCol*exp(-r2*7.0)*0.5,1.0);
+}`;
+
+/* Mgławice jako kwady zwrócone do kamery. Punkty odpadły: mobilne GPU
+   obcinają gl_PointSize do 64-128 px, więc wielkie obłoki znikały. */
+const VS_NEB=`
+attribute vec3 aPos; attribute vec3 aCol; attribute vec2 aUV;
+uniform mat4 uMVP;
+varying vec3 vCol; varying vec2 vUV;
+void main(){ gl_Position=uMVP*vec4(aPos,1.0); vCol=aCol; vUV=aUV; }`;
+const FS_NEB=`
+precision highp float;
+varying vec3 vCol; varying vec2 vUV;
+void main(){
+  float r2=dot(vUV,vUV);
+  if(r2>1.0) discard;
+  float a=exp(-r2*2.6)-0.074;      /* miękki brzeg, zero na krawędzi */
+  if(a<=0.0) discard;
+  gl_FragColor=vec4(vCol*a,1.0);
+}`;
+
+const VS_QUAD=`attribute vec2 aPos; varying vec2 vUV;
+void main(){ vUV=aPos*0.5+0.5; gl_Position=vec4(aPos,0.0,1.0); }`;
+/* wyciąg jasnych partii — źródło poświaty */
+const FS_BRIGHT=`precision highp float; varying vec2 vUV;
+uniform sampler2D uSrc; uniform float uThresh, uScale;
+void main(){
+  vec3 c=texture2D(uSrc,vUV).rgb;
+  gl_FragColor=vec4(max(c-uThresh,0.0)*uScale,1.0);
+}`;
+/* rozmycie rozdzielne, 9 próbek */
+const FS_BLUR=`precision highp float; varying vec2 vUV;
+uniform sampler2D uSrc; uniform vec2 uDir;
+void main(){
+  vec3 c=texture2D(uSrc,vUV).rgb*0.2270270;
+  c+=texture2D(uSrc,vUV+uDir*1.3846154).rgb*0.3162162;
+  c+=texture2D(uSrc,vUV-uDir*1.3846154).rgb*0.3162162;
+  c+=texture2D(uSrc,vUV+uDir*3.2307692).rgb*0.0702703;
+  c+=texture2D(uSrc,vUV-uDir*3.2307692).rgb*0.0702703;
+  gl_FragColor=vec4(c,1.0);
+}`;
+const FS_PRES=`precision highp float; varying vec2 vUV;
+uniform sampler2D uScene, uB4, uB8;
+uniform float uBloom, uExposure, uFringe;
+uniform vec2 uRes;
+void main(){
+  vec3 c=texture2D(uScene,vUV).rgb;
+
+  /* Szeroka aureola próbkowana z lekkim rozsunięciem kanałów —
+     stąd tęczowa obwódka wokół najjaśniejszych miejsc. */
+  vec2 d=(vUV-0.5)*uFringe;
+  vec3 wide=vec3(texture2D(uB8,vUV+d).r,
+                 texture2D(uB8,vUV).g,
+                 texture2D(uB8,vUV-d).b);
+  c+=(texture2D(uB4,vUV).rgb + wide*1.35)*uBloom;
+
+  c*=uExposure;
+  c=c/(1.0+c*0.30);
+  c=pow(c,vec3(0.4545));
+
+  /* Rozproszenie błędu kwantyzacji — bez tego mgławice i mgła
+     rozwarstwiają się w widoczne pasy. */
+  float n=fract(sin(dot(vUV*uRes,vec2(12.9898,78.233)))*43758.5453);
+  c+=(n-0.5)*(1.0/255.0);
+
+  gl_FragColor=vec4(c,1.0);
+}`;
+
+const pRib=link(VS_RIB,FS_RIB,["aPos","aCol","aOff","aSide"]);
+const rMVP=gl.getUniformLocation(pRib,"uMVP"), rSoft=gl.getUniformLocation(pRib,"uSoft"),
+      rWidth=gl.getUniformLocation(pRib,"uWidth"), rGain=gl.getUniformLocation(pRib,"uGain"),
+      rHeat=gl.getUniformLocation(pRib,"uHeat");
+const pPts=link(VS_PTS,FS_PTS,["aPos","aCol","aSize"]);
+const pMVP=gl.getUniformLocation(pPts,"uMVP"), pScale=gl.getUniformLocation(pPts,"uScale");
+const pMist=link(VS_PTS,FS_MIST,["aPos","aCol","aSize"]);
+const mMVP=gl.getUniformLocation(pMist,"uMVP"), mScale=gl.getUniformLocation(pMist,"uScale");
+const pBright=link(VS_QUAD,FS_BRIGHT,["aPos"]);
+const brSrc=gl.getUniformLocation(pBright,"uSrc"),
+      brThresh=gl.getUniformLocation(pBright,"uThresh"),
+      brScale=gl.getUniformLocation(pBright,"uScale");
+const pBlur=link(VS_QUAD,FS_BLUR,["aPos"]);
+const blSrc=gl.getUniformLocation(pBlur,"uSrc"), blDir=gl.getUniformLocation(pBlur,"uDir");
+const pPres=link(VS_QUAD,FS_PRES,["aPos"]);
+const zScene=gl.getUniformLocation(pPres,"uScene"),
+      zB4=gl.getUniformLocation(pPres,"uB4"),
+      zB8=gl.getUniformLocation(pPres,"uB8"),
+      zBloom=gl.getUniformLocation(pPres,"uBloom"),
+      zExp=gl.getUniformLocation(pPres,"uExposure"),
+      zFringe=gl.getUniformLocation(pPres,"uFringe"),
+      zRes=gl.getUniformLocation(pPres,"uRes");
+
+const pNeb=link(VS_NEB,FS_NEB,["aPos","aCol","aUV"]);
+const nMVP=gl.getUniformLocation(pNeb,"uMVP");
+const vboNeb=gl.createBuffer();
+/* 6 wierzchołków na obłok, 8 pól na wierzchołek */
+const nebBuf=new Float32Array(N_NEB*6*8);
+let nebV=0;
+
+/* Kwady zwrócone do kamery: rozpinamy je na wektorach prawo/góra
+   wyciągniętych z macierzy widoku. */
+function buildNebulae(view){
+  const rx=view[0], ry=view[4], rz=view[8];
+  const ux=view[1], uy=view[5], uz=view[9];
+  const UV=[-1,-1, 1,-1, 1,1, -1,-1, 1,1, -1,1];
+  nebV=0;
+  for(let i=0;i<N_NEB;i++){
+    const b=(0.72+0.28*Math.sin(nebPhase[i]+simT*nebRate[i]))*NEB_MUL;
+    if(b<=0) continue;
+    const s=nebR[i];
+    const cx=nebPos[i*3], cy=nebPos[i*3+1], cz=nebPos[i*3+2];
+    const r=nebCol[i*3]*b, g=nebCol[i*3+1]*b, bl=nebCol[i*3+2]*b;
+    for(let k=0;k<6;k++){
+      const u=UV[k*2], v=UV[k*2+1];
+      const o=nebV*8;
+      nebBuf[o]  =cx+(rx*u+ux*v)*s;
+      nebBuf[o+1]=cy+(ry*u+uy*v)*s;
+      nebBuf[o+2]=cz+(rz*u+uz*v)*s;
+      nebBuf[o+3]=r; nebBuf[o+4]=g; nebBuf[o+5]=bl;
+      nebBuf[o+6]=u; nebBuf[o+7]=v;
+      nebV++;
+    }
+  }
+}
+function drawNebulae(){
+  if(nebV===0) return;
+  gl.useProgram(pNeb);
+  gl.uniformMatrix4fv(nMVP,false,vp);
+  gl.bindBuffer(gl.ARRAY_BUFFER,vboNeb);
+  gl.bufferData(gl.ARRAY_BUFFER,nebBuf.subarray(0,nebV*8),gl.STREAM_DRAW);
+  gl.enableVertexAttribArray(0);gl.enableVertexAttribArray(1);gl.enableVertexAttribArray(2);
+  gl.vertexAttribPointer(0,3,gl.FLOAT,false,32,0);
+  gl.vertexAttribPointer(1,3,gl.FLOAT,false,32,12);
+  gl.vertexAttribPointer(2,2,gl.FLOAT,false,32,24);
+  gl.drawArrays(gl.TRIANGLES,0,nebV);
+  gl.disableVertexAttribArray(0);gl.disableVertexAttribArray(1);gl.disableVertexAttribArray(2);
+}
+
+const vboRib=gl.createBuffer(), vboPts=gl.createBuffer(),
+      vboMist=gl.createBuffer(), vboQuad=gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER,vboQuad);
+gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),gl.STATIC_DRAW);
+
+/* ================= wstęgi ======================================== */
+/* Wierzchołek: środek(3) + barwa(3) + odsunięcie w bok(3) + strona(1).
+   Szerokość i jasność są mnożnikami w shaderze, więc geometrię budujemy
+   RAZ na klatkę, a rysujemy dwa razy (poświata + rdzeń). */
+const RIB_STRIDE=10;
+const MAX_RIB_V=MAX_FLYERS*MAX_SAMPLES*2;
+const ribBuf=new Float32Array(MAX_RIB_V*RIB_STRIDE);
+let ribV=0;
+const ranges=[];
+
+function buildRibbons(eye){
+  ribV=0; ranges.length=0;
+  for(const f of flyers){
+    if(f.n<2||f.waiting||sleeping(f)||(f.group&&f.group.waiting)) continue;
+    const start=ribV;
+    for(let i=0;i<f.n;i++){
+      const i0=i>0?i-1:0, i1=i<f.n-1?i+1:f.n-1;
+      let tx=f.sx[i1]-f.sx[i0], ty=f.sy[i1]-f.sy[i0], tz=f.sz[i1]-f.sz[i0];
+      const tl=Math.hypot(tx,ty,tz)||1; tx/=tl;ty/=tl;tz/=tl;
+
+      let vx=eye[0]-f.sx[i], vy=eye[1]-f.sy[i], vz=eye[2]-f.sz[i];
+      const vl=Math.hypot(vx,vy,vz)||1; vx/=vl;vy/=vl;vz/=vl;
+
+      let rx=ty*vz-tz*vy, ry=tz*vx-tx*vz, rz=tx*vy-ty*vx;
+      const rl=Math.hypot(rx,ry,rz);
+      if(rl<1e-5){rx=1;ry=0;rz=0;} else {rx/=rl;ry/=rl;rz/=rl;}
+
+      const age=f.sa[i]/TRAIL_LIFE;
+      const fade=Math.pow(Math.max(0,1-age),3.0);
+      const spread=1+age*age*3.2;
+      const headness=i/(f.n-1);
+      const hw=f.width*(0.22+0.78*headness)*spread;
+
+      const depth=Math.max(0.30,Math.min(2.4,20.0/Math.max(vl,3)));
+      const g=fade*depth/spread*(f.ribbon===R_TUBE?1.1:1.7);
+
+      const ox=rx*hw, oy=ry*hw, oz=rz*hw;
+      const cr=f.scr[i]*g, cg=f.scg[i]*g, cb=f.scb[i]*g;
+
+      for(let s=-1;s<=1;s+=2){
+        const o=ribV*RIB_STRIDE;
+        ribBuf[o]  =f.sx[i]; ribBuf[o+1]=f.sy[i]; ribBuf[o+2]=f.sz[i];
+        ribBuf[o+3]=cr;      ribBuf[o+4]=cg;      ribBuf[o+5]=cb;
+        ribBuf[o+6]=ox*s;    ribBuf[o+7]=oy*s;    ribBuf[o+8]=oz*s;
+        ribBuf[o+9]=s;
+        ribV++;
+      }
+    }
+    ranges.push([start,ribV-start]);
+  }
+}
+
+/* ================= punkty ======================================== */
+const MAX_PT=N_BG+MAX_SPARK+128;
+const ptBuf=new Float32Array(MAX_PT*7);
+const mistBuf=new Float32Array(MAX_SPARK*7);
+let ptN=0, mistN=0;
+
+function buildPoints(){
+  ptBuf.set(bg.subarray(0,N_BG*7),0); ptN=N_BG; mistN=0;
+
+  for(let i=0;i<sparkN;i++){
+    const f=kl[i]/kl0[i];
+    if(kgrow[i]>0){
+      const o=mistN*7, g=f*f*0.22;
+      mistBuf[o]=kx[i];mistBuf[o+1]=ky[i];mistBuf[o+2]=kz[i];
+      mistBuf[o+3]=kr[i]*g;mistBuf[o+4]=kg[i]*g;mistBuf[o+5]=kb[i]*g;
+      mistBuf[o+6]=ks[i]*(1+kgrow[i]*(1-f));
+      mistN++;
+    } else {
+      const o=ptN*7, g=f*f*1.6;
+      ptBuf[o]=kx[i];ptBuf[o+1]=ky[i];ptBuf[o+2]=kz[i];
+      ptBuf[o+3]=kr[i]*g;ptBuf[o+4]=kg[i]*g;ptBuf[o+5]=kb[i]*g;
+      ptBuf[o+6]=ks[i]*(0.45+f*0.75);
+      ptN++;
+    }
+  }
+  for(const f of flyers){
+    if(f.waiting||sleeping(f)||(f.group&&f.group.waiting)) continue;
+    const d=Math.hypot(camEye[0]-f.pos[0],camEye[1]-f.pos[1],camEye[2]-f.pos[2]);
+    const depth=Math.max(0.4,Math.min(3.0,20.0/Math.max(d,3)));
+    const o=ptN*7, g=2.7*f.headGlow*depth;
+    ptBuf[o]=f.pos[0];ptBuf[o+1]=f.pos[1];ptBuf[o+2]=f.pos[2];
+    ptBuf[o+3]=(f.col[0]*0.45+0.55)*g;
+    ptBuf[o+4]=(f.col[1]*0.45+0.55)*g;
+    ptBuf[o+5]=(f.col[2]*0.45+0.55)*g;
+    ptBuf[o+6]=f.ribbon===R_TUBE?11:8;
+    ptN++;
+  }
+}
+
+/* ================= cel renderowania ============================== */
+let fbo=null,tex=null,fw=0,fh=0;
+
+/* ---- łańcuch poświaty ------------------------------------------- */
+/* Dwa poziomy: ćwiartka rozdzielczości daje ciasną poświatę wokół
+   wstęg, ósemka szeroką aureolę. Rozmycie rozdzielne, więc koszt
+   rośnie liniowo, nie kwadratowo. */
+const BL={ w4:0,h4:0,w8:0,h8:0, t4a:null,t4b:null,t8a:null,t8b:null,
+           f4a:null,f4b:null,f8a:null,f8b:null };
+
+/* ---- HDR --------------------------------------------------------
+   Bufor 8-bitowy ścina addytywne sumowanie na 1.0: rozżarzony rdzeń
+   wstęgi i zwykła poświata lądują w tej samej bieli. Half-float
+   zachowuje prawdziwe wartości, więc bloom ma co odróżniać.
+   Jak sprzęt nie umie — schodzimy na 8 bitów bez awantury. */
+const extHF  = gl.getExtension("OES_texture_half_float");
+const extHFL = gl.getExtension("OES_texture_half_float_linear");
+gl.getExtension("EXT_color_buffer_half_float");
+let TEX_TYPE = gl.UNSIGNED_BYTE, HDR=false, TEX_FILTER=gl.LINEAR;
+
+(function probeHDR(){
+  if(!extHF) return;
+  const HALF=extHF.HALF_FLOAT_OES;
+  const t=gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D,t);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,8,8,0,gl.RGBA,HALF,null);
+  const f=gl.createFramebuffer();
+  gl.bindFramebuffer(gl.FRAMEBUFFER,f);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,t,0);
+  const ok=gl.checkFramebufferStatus(gl.FRAMEBUFFER)===gl.FRAMEBUFFER_COMPLETE;
+  gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+  gl.deleteFramebuffer(f); gl.deleteTexture(t);
+  if(ok){
+    TEX_TYPE=HALF; HDR=true;
+    /* filtrowanie liniowe half-floatów bywa nieobsługiwane */
+    TEX_FILTER = extHFL ? gl.LINEAR : gl.NEAREST;
+  }
+})();
+
+function mkTex(w,h){
+  const t=gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D,t);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,w,h,0,gl.RGBA,TEX_TYPE,null);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,TEX_FILTER);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,TEX_FILTER);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+  return t;
+}
+function mkFbo(t){
+  const f=gl.createFramebuffer();
+  gl.bindFramebuffer(gl.FRAMEBUFFER,f);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,t,0);
+  gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+  return f;
+}
+function makeBloomChain(w,h){
+  for(const k of ["t4a","t4b","t8a","t8b"]) if(BL[k]) gl.deleteTexture(BL[k]);
+  for(const k of ["f4a","f4b","f8a","f8b"]) if(BL[k]) gl.deleteFramebuffer(BL[k]);
+  BL.w4=Math.max(1,w>>2); BL.h4=Math.max(1,h>>2);
+  BL.w8=Math.max(1,w>>3); BL.h8=Math.max(1,h>>3);
+  BL.t4a=mkTex(BL.w4,BL.h4); BL.t4b=mkTex(BL.w4,BL.h4);
+  BL.t8a=mkTex(BL.w8,BL.h8); BL.t8b=mkTex(BL.w8,BL.h8);
+  BL.f4a=mkFbo(BL.t4a); BL.f4b=mkFbo(BL.t4b);
+  BL.f8a=mkFbo(BL.t8a); BL.f8b=mkFbo(BL.t8b);
+}
+
+function blurInto(dstFbo,srcTex,w,h,dx,dy){
+  gl.bindFramebuffer(gl.FRAMEBUFFER,dstFbo);
+  gl.viewport(0,0,w,h);
+  gl.useProgram(pBlur);
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D,srcTex);
+  gl.uniform1i(blSrc,0);
+  gl.uniform2f(blDir,dx,dy);
+  drawQuad();
+}
+
+function runBloom(){
+  gl.disable(gl.BLEND);
+
+  /* wyciąg jasnych partii prosto do ćwiartki */
+  gl.bindFramebuffer(gl.FRAMEBUFFER,BL.f4a);
+  gl.viewport(0,0,BL.w4,BL.h4);
+  gl.useProgram(pBright);
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D,tex);
+  gl.uniform1i(brSrc,0);
+  /* w HDR próg leży powyżej bieli — świeci tylko to, co naprawdę gorące */
+  gl.uniform1f(brThresh, HDR?0.75:0.085);
+  gl.uniform1f(brScale,  HDR?0.85:1.30);
+  drawQuad();
+
+  blurInto(BL.f4b,BL.t4a,BL.w4,BL.h4,1/BL.w4,0);
+  blurInto(BL.f4a,BL.t4b,BL.w4,BL.h4,0,1/BL.h4);
+
+  /* poziom szerokiej aureoli — z już rozmytej ćwiartki */
+  blurInto(BL.f8a,BL.t4a,BL.w8,BL.h8,1/BL.w8,0);
+  blurInto(BL.f8b,BL.t8a,BL.w8,BL.h8,0,1/BL.h8);
+  blurInto(BL.f8a,BL.t8b,BL.w8,BL.h8,2/BL.w8,0);
+  blurInto(BL.f8b,BL.t8a,BL.w8,BL.h8,0,2/BL.h8);
+}
+function makeTarget(w,h){
+  if(tex)gl.deleteTexture(tex); if(fbo)gl.deleteFramebuffer(fbo);
+  tex=mkTex(w,h);
+  fbo=gl.createFramebuffer();
+  gl.bindFramebuffer(gl.FRAMEBUFFER,fbo);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,tex,0);
+  gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+  fw=w;fh=h;
+  makeBloomChain(w,h);
+}
+function drawQuad(){
+  gl.bindBuffer(gl.ARRAY_BUFFER,vboQuad);
+  gl.enableVertexAttribArray(0);
+  gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0);
+  gl.drawArrays(gl.TRIANGLES,0,3);
+  gl.disableVertexAttribArray(0);
+}
+function bindPts(vbo,buf,n){
+  gl.bindBuffer(gl.ARRAY_BUFFER,vbo);
+  gl.bufferData(gl.ARRAY_BUFFER,buf.subarray(0,n*7),gl.STREAM_DRAW);
+  gl.enableVertexAttribArray(0);gl.enableVertexAttribArray(1);gl.enableVertexAttribArray(2);
+  gl.vertexAttribPointer(0,3,gl.FLOAT,false,28,0);
+  gl.vertexAttribPointer(1,3,gl.FLOAT,false,28,12);
+  gl.vertexAttribPointer(2,1,gl.FLOAT,false,28,24);
+  gl.drawArrays(gl.POINTS,0,n);
+  gl.disableVertexAttribArray(0);gl.disableVertexAttribArray(1);gl.disableVertexAttribArray(2);
+}
+/* geometria jest już w VBO — wgrywamy ją raz, rysujemy wielokrotnie */
+function uploadRibbons(){
+  gl.bindBuffer(gl.ARRAY_BUFFER,vboRib);
+  gl.bufferData(gl.ARRAY_BUFFER,ribBuf.subarray(0,ribV*RIB_STRIDE),gl.STREAM_DRAW);
+}
+function drawRibbons(soft,width,gain,heat){
+  if(ribV===0) return;
+  const st=RIB_STRIDE*4;
+  gl.useProgram(pRib);
+  gl.uniformMatrix4fv(rMVP,false,vp);
+  gl.uniform1f(rSoft,soft);
+  gl.uniform1f(rWidth,width);
+  gl.uniform1f(rGain,gain);
+  gl.uniform1f(rHeat,heat||0.0);
+  gl.bindBuffer(gl.ARRAY_BUFFER,vboRib);
+  gl.enableVertexAttribArray(0);gl.enableVertexAttribArray(1);
+  gl.enableVertexAttribArray(2);gl.enableVertexAttribArray(3);
+  gl.vertexAttribPointer(0,3,gl.FLOAT,false,st,0);
+  gl.vertexAttribPointer(1,3,gl.FLOAT,false,st,12);
+  gl.vertexAttribPointer(2,3,gl.FLOAT,false,st,24);
+  gl.vertexAttribPointer(3,1,gl.FLOAT,false,st,36);
+  for(const [s,n] of ranges) if(n>=4) gl.drawArrays(gl.TRIANGLE_STRIP,s,n);
+  gl.disableVertexAttribArray(0);gl.disableVertexAttribArray(1);
+  gl.disableVertexAttribArray(2);gl.disableVertexAttribArray(3);
+}
+
+/* ================= świat ========================================= */
+function build(){
+  flyers.length=0; groups.length=0; sparkN=0;
+  seedBG();
+  seedNebulae();
+  seedAttractors();
+  /* Obserwator siedzi w środku sfery i widzi jej ~15%, więc żeby
+     w kadrze było kilkanaście obiektów, w scenie musi ich być kilkadziesiąt. */
+  for(let i=0;i<14;i++) makeGroup(2);
+  for(let i=0;i<9;i++)  makeGroup(3);
+  for(let i=0;i<48;i++) makeFlyer(R_THREAD);
+  for(let i=0;i<30;i++) makeFlyer(R_SPARK);
+  for(let i=0;i<28;i++) makeFlyer(R_VAPOR);
+  for(let i=0;i<12;i++) makeFlyer(R_BEAD);
+  for(let i=0;i<12;i++) makeFlyer(R_TUBE);
+}
+
+/* ================= pętla ========================================= */
+const proj=new Float32Array(16), view=new Float32Array(16), vp=new Float32Array(16);
+let speed=1.0, lastMs=performance.now(), simT=0, microT=1.2, farT=3.0;
+const statEl=document.getElementById("stat");
+
+function resize(){
+  const d=Math.min(window.devicePixelRatio||1,2);
+  const w=Math.floor(cv.clientWidth*d), h=Math.floor(cv.clientHeight*d);
+  if(cv.width!==w||cv.height!==h){cv.width=w;cv.height=h;}
+  if(fw!==w||fh!==h) makeTarget(w,h);
+}
+
+build();
+resize();
+
+function frame(now){
+  requestAnimationFrame(frame);
+  resize();
+
+  let dt=(now-lastMs)/1000; lastMs=now;
+  if(dt>0.05) dt=0.05;
+  dt*=speed; simT+=dt;
+
+  /* kamera najpierw — test widoczności przy wlotach jej potrzebuje */
+  /* Obserwator siedzi wewnątrz roju i powoli się rozgląda — obiekty
+     przelatują obok, nad głową i za plecami. */
+  const camR=3.2+1.4*Math.sin(simT*0.013);
+  const camA=simT*0.041;
+  const eye=[Math.cos(camA)*camR, Math.sin(camA)*camR, 1.4*Math.sin(simT*0.019)];
+  const yaw=simT*0.055, pitch=0.28*Math.sin(simT*0.017);
+  const fwd=[Math.cos(yaw)*Math.cos(pitch),
+             Math.sin(yaw)*Math.cos(pitch),
+             Math.sin(pitch)];
+  const target=[eye[0]+fwd[0]*10, eye[1]+fwd[1]*10, eye[2]+fwd[2]*10];
+  const asp=cv.width/Math.max(cv.height,1);
+  mPersp(proj,1.22,asp,0.15,300);
+  mLookAt(view,eye,target,[0,0,1]);
+  mMul(proj,view,vp);
+  curVP=vp;
+  camEye=eye;
+
+  /* mały krok całkowania — orbity blisko centrów są szybkie */
+  const sub=Math.min(4,1+((dt/0.008)|0));
+  for(let i=0;i<sub;i++) stepAll(simT,dt/sub);
+  stepSparks(dt);
+
+  /* wybuchy na drugim planie — rzadkie, żeby były zdarzeniem */
+  farT-=dt;
+  if(farT<=0){
+    farT=5+rnd()*11;
+    let d=[rnd2(),rnd2(),rnd2()];
+    const dl=Math.hypot(d[0],d[1],d[2])||1, r=52+rnd()*46;
+    farBurst(d[0]/dl*r, d[1]/dl*r, d[2]/dl*r, rnd());
+  }
+
+  microT-=dt;
+  if(microT<=0){
+    microT=0.4+rnd()*1.6;
+    const f=pick(flyers);
+    let d=[rnd2(),rnd2(),rnd2()];
+    const dl=Math.hypot(d[0],d[1],d[2])||1, r=8+rnd()*26;
+    microBurst(d[0]/dl*r, d[1]/dl*r, d[2]/dl*r, f?f.col:[1,1,1]);
+  }
+
+  buildPoints();
+
+  gl.viewport(0,0,cv.width,cv.height);
+  gl.bindFramebuffer(gl.FRAMEBUFFER,fbo);
+  gl.clearColor(0,0,0,1);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.ONE,gl.ONE);
+
+  buildNebulae(view);
+  drawNebulae();
+
+  if(mistN>0){
+    gl.useProgram(pMist);
+    gl.uniformMatrix4fv(mMVP,false,vp);
+    gl.uniform1f(mScale,cv.height*0.0042);
+    bindPts(vboMist,mistBuf,mistN);
+  }
+
+  buildRibbons(eye);
+  uploadRibbons();
+  drawRibbons(1.6, 2.6, 0.26, 0.0);   /* szeroka miękka poświata */
+  drawRibbons(7.0, 1.0, 1.00, 0.9);   /* wąski rdzeń, rozżarzony  */
+
+  gl.useProgram(pPts);
+  gl.uniformMatrix4fv(pMVP,false,vp);
+  gl.uniform1f(pScale,cv.height*0.0042);
+  bindPts(vboPts,ptBuf,ptN);
+
+  runBloom();
+
+  gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+  gl.viewport(0,0,cv.width,cv.height);
+  gl.disable(gl.BLEND);
+  gl.useProgram(pPres);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,tex);
+  gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D,BL.t4a);
+  gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D,BL.t8b);
+  gl.uniform1i(zScene,0); gl.uniform1i(zB4,1); gl.uniform1i(zB8,2);
+  gl.uniform1f(zBloom,BLOOM_MUL);
+  gl.uniform1f(zExp,EXPOSURE);
+  gl.uniform1f(zFringe,FRINGE);
+  gl.uniform2f(zRes,cv.width,cv.height);
+  drawQuad();
+  gl.activeTexture(gl.TEXTURE0);
+
+  statEl.textContent=flyers.length+" obiektów · "+groups.length+" układów · "
+                    +mistN+" mgły · "+(sparkN-mistN)+" iskier";
+}
+
+/* ================= panel ========================================= */
+const ui=document.getElementById("ui");
+const spEl=document.getElementById("speed"), spV=document.getElementById("speedv");
+const trEl=document.getElementById("trail"), trV=document.getElementById("trailv");
+const msEl=document.getElementById("mist"),  msV=document.getElementById("mistv");
+const huEl=document.getElementById("hue"),   huV=document.getElementById("huev");
+const nbEl=document.getElementById("neb"),   nbV=document.getElementById("nebv");
+const blEl=document.getElementById("bloom"),blV=document.getElementById("bloomv");
+const dnEl=document.getElementById("dens"), dnV=document.getElementById("densv");
+const exEl=document.getElementById("expo"),  exV=document.getElementById("expov");
+const frEl=document.getElementById("fringe"),frV=document.getElementById("fringev");
+spEl.oninput=()=>{speed=spEl.value/100;spV.textContent=speed.toFixed(1)+"×";};
+trEl.oninput=()=>{TRAIL_LIFE=trEl.value/10;trV.textContent=TRAIL_LIFE.toFixed(1)+" s";};
+msEl.oninput=()=>{MIST_MUL=msEl.value/100;msV.textContent=MIST_MUL.toFixed(1)+"×";};
+huEl.oninput=()=>{HUE_MUL=huEl.value/100;huV.textContent=HUE_MUL.toFixed(1)+"×";};
+nbEl.oninput=()=>{NEB_MUL=nbEl.value/100;nbV.textContent=NEB_MUL.toFixed(1)+"×";};
+blEl.oninput=()=>{BLOOM_MUL=blEl.value/100;blV.textContent=BLOOM_MUL.toFixed(1)+"×";};
+dnEl.oninput=()=>{DENSITY=dnEl.value/100;dnV.textContent=dnEl.value+"%";};
+exEl.oninput=()=>{EXPOSURE=exEl.value/100;exV.textContent=EXPOSURE.toFixed(2)+"×";};
+frEl.oninput=()=>{FRINGE=frEl.value/1000;frV.textContent=FRINGE.toFixed(3);};
+document.getElementById("boom").onclick=()=>{
+  const f=pick(flyers); if(f) explode(f.pos[0],f.pos[1],f.pos[2],f.col);};
+document.getElementById("pair").onclick=()=>makeGroup(2);
+document.getElementById("trio").onclick=()=>makeGroup(3);
+document.getElementById("reset").onclick=()=>{build();simT=0;};
+window.onkeydown=e=>{if(e.key==="h"||e.key==="H")
+  ui.style.display=ui.style.display==="none"?"":"none";};
+
+/* HDR nie ścina sumowania, więc scena wychodzi jaśniejsza —
+   ustawiamy suwak jasności odpowiednio do wykrytego trybu. */
+if(HDR){
+  EXPOSURE=0.55;
+  exEl.value=Math.round(EXPOSURE*100);
+  exV.textContent=EXPOSURE.toFixed(2)+"×";
+}
+document.getElementById("hint").textContent=
+  (HDR?"HDR":"8-bit")+" · H — panel";
+
+requestAnimationFrame(frame);
+</script>
+</html>

@@ -1,0 +1,9 @@
+# Autostart alternative to the systemd service: copy to ~/.config/autostart/
+[Desktop Entry]
+Type=Application
+Name=nebulights
+Comment=Screensaver
+Exec=nebulights -t 300
+Terminal=false
+NoDisplay=true
+X-KDE-autostart-phase=2

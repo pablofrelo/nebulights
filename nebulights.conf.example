@@ -1,0 +1,81 @@
+# nebulights configuration
+# Copy to ~/.config/nebulights.conf and uncomment what you need.
+# Format: "key value" or "key = value". # starts a comment.
+# No file = defaults.
+
+# ---- LOOK --------------------------------------------------------
+
+# Colour palette: 0 = rainbow, 1 = gruvbox, 2 = nostromo (amber/green).
+#palette 0
+
+# How many seconds a trail lives.
+#trail_life 2.2
+
+# Amount of steam and smoke rising from the trails.
+#mist 1.0
+
+# Speed of hue drift. 0 freezes the colours.
+#hue_rate 1.0
+
+# Brightness of the background nebulae.
+#nebula 1.0
+
+# Glow strength.
+#bloom 1.0
+
+# Chromatic split in the halo (rainbow fringe).
+#fringe 0.010
+
+# Image brightness. Chosen automatically by default
+# (0.55 with HDR, 1.0 without).
+#exposure 0.55
+
+# ---- PERFORMANCE (most effective first) --------------------------
+# The bottleneck is pixel fill, not the CPU. Turn these in this order
+# if frames drop.
+
+# Nebulae are drawn into a quarter-size buffer (16x fewer pixels), so
+# they are no longer the main cost. If it still stutters, start here.
+# Fill cost grows LINEARLY with the count and QUADRATICALLY with size.
+#nebula_puffs 2400
+#nebula_size 1.8
+
+# Glow levels: 2 = tight glow + wide halo, 1 = tight only, 0 = none.
+# Each level is several full-screen passes.
+#bloom_levels 2
+
+# Cast size in percent. 100 = 185 objects. Affects CPU and fill.
+#objects 100
+
+# Runtime throttle: puts some objects to sleep.
+# Quick way to check whether the number of ribbons is the problem.
+#density 1.0
+
+# Trail sampling step. Higher = fewer vertices, but ribbons get
+# angular in tight turns.
+#sample_step 0.07
+
+# Background stars: cheap, but they add up on a weak GPU.
+#stars 9000
+
+# Half-float buffer. 0 disables HDR: less memory bandwidth, but bright
+# ribbon cores flatten to white.
+#half_float 1
+
+# Frame cap. 0 = uncapped (whatever the display does).
+# Running all night at 180 Hz heats the GPU for nothing; at 30 you
+# will not see a difference and power draw drops several times.
+#fps_cap 0
+
+# ---- PRESETS -----------------------------------------------------
+# Weak GPU / laptop on battery:
+#   nebula_size 1.2
+#   bloom_levels 1
+#   objects 60
+#
+# No glow at all, maximum smoothness:
+#   nebula_puffs 800
+#   nebula_size 1.0
+#   bloom_levels 0
+#   objects 40
+#   half_float 0
