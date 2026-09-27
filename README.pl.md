@@ -20,9 +20,6 @@ i river też powinny działać.
 
 ## Instalacja
 
-Arch Linux (AUR):
-
-    paru -S nebulights
 
 Ze źródeł:
 

@@ -19,9 +19,6 @@ and river should work too.
 
 ## Install
 
-Arch Linux (AUR):
-
-    paru -S nebulights
 
 From source:
 
