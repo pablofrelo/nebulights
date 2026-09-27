@@ -1249,40 +1249,74 @@ static void probe_hdr(void)
 	}
 }
 
+/*
+ * Każdy rozmiar ekranu ma własny komplet buforów. Przy monitorach
+ * o różnych rozdzielczościach wcześniej przealokowywaliśmy wszystko
+ * przy każdej klatce każdego wyjścia; teraz tylko przełączamy komplet.
+ */
+struct targets {
+	int w, h;
+	GLuint tex_scene, fbo_scene, t4a, t4b, t8a, t8b, f4a, f4b, f8a, f8b;
+	GLuint tex_neb, fbo_neb;
+	int b4w, b4h, b8w, b8h;
+};
+#define MAX_TARGETS 4
+static struct targets RT[MAX_TARGETS];
+static int n_rt = 0;
+
+static void targets_free(struct targets *r)
+{
+	GLuint ts[6] = { r->tex_scene, r->t4a, r->t4b, r->t8a, r->t8b, r->tex_neb };
+	GLuint fs[6] = { r->fbo_scene, r->f4a, r->f4b, r->f8a, r->f8b, r->fbo_neb };
+	glDeleteTextures(6, ts);
+	glDeleteFramebuffers(6, fs);
+}
+
 static void make_targets(int w, int h)
 {
 	if (rt_w == w && rt_h == h)
 		return;
 
-	if (tex_scene) {
-		glDeleteTextures(1, &tex_scene);
-		glDeleteFramebuffers(1, &fbo_scene);
-		GLuint ts[5] = { t4a, t4b, t8a, t8b, tex_neb };
-		GLuint fs[5] = { f4a, f4b, f8a, f8b, fbo_neb };
-		glDeleteTextures(5, ts);
-		glDeleteFramebuffers(5, fs);
+	struct targets *r = NULL;
+	for (int i = 0; i < n_rt; i++)
+		if (RT[i].w == w && RT[i].h == h)
+			r = &RT[i];
+
+	if (!r) {
+		if (n_rt == MAX_TARGETS) {   /* nie powinno się zdarzyć */
+			targets_free(&RT[0]);
+			memmove(RT, RT + 1, sizeof(RT[0]) * (MAX_TARGETS - 1));
+			n_rt--;
+		}
+		r = &RT[n_rt++];
+		r->w = w; r->h = h;
+
+		r->tex_scene = mk_tex(w, h);
+		r->fbo_scene = mk_fbo(r->tex_scene);
+
+		r->b4w = w >> 2; r->b4h = h >> 2;
+		r->b8w = w >> 3; r->b8h = h >> 3;
+		if (r->b4w < 1) r->b4w = 1;
+		if (r->b4h < 1) r->b4h = 1;
+		if (r->b8w < 1) r->b8w = 1;
+		if (r->b8h < 1) r->b8h = 1;
+
+		/* Mgławice to najbardziej rozmyte rzeczy w scenie — ćwiartka boku
+		   niczego nie psuje, a ścina wypełnianie szesnastokrotnie. */
+		r->tex_neb = mk_tex(r->b4w, r->b4h);
+		r->fbo_neb = mk_fbo(r->tex_neb);
+
+		r->t4a = mk_tex(r->b4w, r->b4h); r->t4b = mk_tex(r->b4w, r->b4h);
+		r->t8a = mk_tex(r->b8w, r->b8h); r->t8b = mk_tex(r->b8w, r->b8h);
+		r->f4a = mk_fbo(r->t4a); r->f4b = mk_fbo(r->t4b);
+		r->f8a = mk_fbo(r->t8a); r->f8b = mk_fbo(r->t8b);
 	}
 
-	tex_scene = mk_tex(w, h);
-	fbo_scene = mk_fbo(tex_scene);
-
-	b4w = w >> 2; b4h = h >> 2;
-	b8w = w >> 3; b8h = h >> 3;
-	if (b4w < 1) b4w = 1;
-	if (b4h < 1) b4h = 1;
-	if (b8w < 1) b8w = 1;
-	if (b8h < 1) b8h = 1;
-
-	/* Mgławice to najbardziej rozmyte rzeczy w scenie — ćwiartka boku
-	   niczego nie psuje, a ścina wypełnianie szesnastokrotnie. */
-	tex_neb = mk_tex(b4w, b4h);
-	fbo_neb = mk_fbo(tex_neb);
-
-	t4a = mk_tex(b4w, b4h); t4b = mk_tex(b4w, b4h);
-	t8a = mk_tex(b8w, b8h); t8b = mk_tex(b8w, b8h);
-	f4a = mk_fbo(t4a); f4b = mk_fbo(t4b);
-	f8a = mk_fbo(t8a); f8b = mk_fbo(t8b);
-
+	tex_scene = r->tex_scene; fbo_scene = r->fbo_scene;
+	t4a = r->t4a; t4b = r->t4b; t8a = r->t8a; t8b = r->t8b;
+	f4a = r->f4a; f4b = r->f4b; f8a = r->f8a; f8b = r->f8b;
+	tex_neb = r->tex_neb; fbo_neb = r->fbo_neb;
+	b4w = r->b4w; b4h = r->b4h; b8w = r->b8w; b8h = r->b8h;
 	rt_w = w; rt_h = h;
 }
 
@@ -1720,39 +1754,14 @@ void scene_reset_clock(void)
 	last_t = -1.0;
 }
 
-/*
- * Wygaszacz chodzący całą noc przy 180 Hz grzeje kartę bez powodu.
- * Usypiamy do początku kolejnego okna — kompozytor i tak podeśle zgodę
- * na klatkę, my po prostu oddajemy jej mniej.
- */
-static void throttle(void)
+int scene_fps_cap(void)
 {
-	if (FPS_CAP <= 0)
-		return;
-
-	static double next_ms = 0.0;
-	double period = 1000.0 / (double)FPS_CAP;
-	double now = now_ms();
-
-	if (next_ms == 0.0) { next_ms = now + period; return; }
-
-	double wait = next_ms - now;
-	if (wait > 0.0 && wait < 1000.0) {
-		struct timespec ts = {
-			.tv_sec  = (time_t)(wait / 1000.0),
-			.tv_nsec = (long)fmod(wait, 1000.0) * 1000000L,
-		};
-		nanosleep(&ts, NULL);
-		next_ms += period;
-	} else {
-		next_ms = now_ms() + period;   /* zgubiliśmy rytm, zaczynamy od nowa */
-	}
+	return FPS_CAP;
 }
 
 void scene_draw(int width, int height, double t, float fade)
 {
 	scene_init();
-	throttle();
 	make_targets(width, height);
 
 	float dt = (last_t < 0.0) ? 0.0f : (float)(t - last_t);

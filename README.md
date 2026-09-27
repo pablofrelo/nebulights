@@ -177,8 +177,6 @@ buffer, so `-fsanitize=address` catches overruns.
 
 ## Known limitations
 
-- With monitors of different sizes the glow buffers are reallocated
-  every frame. It works, but it is wasteful.
 - Code comments are in Polish.
 
 ## About the code

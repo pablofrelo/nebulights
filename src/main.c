@@ -51,6 +51,10 @@ struct output {
 
 	int32_t width, height;
 	bool configured;
+
+	/* fps_cap: klatka odłożona do next_ms, bo zgoda przyszła za wcześnie */
+	double next_ms;
+	bool due;
 };
 
 struct app {
@@ -91,6 +95,13 @@ static double now_since(const struct timespec *t0)
 	return (now.tv_sec - t0->tv_sec) + (now.tv_nsec - t0->tv_nsec) / 1e9;
 }
 
+static double now_ms(void)
+{
+	struct timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return ts.tv_sec * 1e3 + ts.tv_nsec / 1e6;
+}
+
 static void die(const char *msg)
 {
 	fprintf(stderr, "nebulights: %s\n", msg);
@@ -108,7 +119,13 @@ static void frame_done(void *data, struct wl_callback *cb, uint32_t time)
 	(void)time;
 	wl_callback_destroy(cb);
 	o->frame = NULL;
-	if (o->v->active)
+	if (!o->v->active)
+		return;
+	/* Każde wyjście ma własne tempo: przy fps_cap zgodę, która przyszła
+	   przed czasem, odkładamy, a pętla główna dorysuje klatkę później. */
+	if (scene_fps_cap() > 0 && now_ms() + 1.0 < o->next_ms)
+		o->due = true;
+	else
 		output_render(o);
 }
 
@@ -133,6 +150,15 @@ static void output_render(struct output *o)
 		fade = 1.0f;
 
 	scene_draw(o->width, o->height, t, fade);
+
+	int cap = scene_fps_cap();
+	if (cap > 0) {
+		double period = 1000.0 / cap, now = now_ms();
+		o->next_ms += period;
+		if (o->next_ms < now)
+			o->next_ms = now + period;
+	}
+	o->due = false;
 
 	o->frame = wl_surface_frame(o->surface);
 	wl_callback_add_listener(o->frame, &frame_listener, o);
@@ -203,6 +229,8 @@ static void output_teardown(struct output *o)
 		wl_callback_destroy(o->frame);
 		o->frame = NULL;
 	}
+	o->due = false;
+	o->next_ms = 0.0;
 	if (o->egl_surface != EGL_NO_SURFACE) {
 		eglMakeCurrent(v->egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE,
 		               EGL_NO_CONTEXT);
@@ -568,6 +596,16 @@ int main(int argc, char **argv)
 		   czy blokada się nie pojawiła albo nie zniknęła. */
 		int wait_ms = (respect_inhibit && (v->pending || v->active))
 		            ? 3000 : -1;
+		struct output *o;
+		wl_list_for_each(o, &v->outputs, link) {
+			if (!o->due)
+				continue;
+			int ms = (int)(o->next_ms - now_ms());
+			if (ms < 0)
+				ms = 0;
+			if (wait_ms < 0 || ms < wait_ms)
+				wait_ms = ms;
+		}
 		int rc = poll(&pfd, 1, wait_ms);
 		if (rc < 0) {
 			wl_display_cancel_read(v->display);
@@ -581,6 +619,10 @@ int main(int argc, char **argv)
 		} else {
 			wl_display_cancel_read(v->display);
 		}
+
+		wl_list_for_each(o, &v->outputs, link)
+			if (o->due && v->active && now_ms() + 1.0 >= o->next_ms)
+				output_render(o);
 
 		if (respect_inhibit && rc == 0) {
 			bool blocked = inhibit_active();

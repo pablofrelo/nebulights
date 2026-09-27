@@ -14,7 +14,9 @@ int main(int argc, char **argv)
 	for (int i = 0; i < frames; i++) {
 		double t = (double)i * dt;
 		float fade = t < 1.5 ? (float)(t / 1.5) : 1.0f;
-		scene_draw(1920, 1080, t, fade);
+		/* jak przy trzech monitorach: różne rozmiary na przemian */
+		scene_draw(1920, 1200, t, fade);
+		scene_draw(2560, 1440, t, fade);
 	}
 	printf("%d frames (%d min) without failure\n", frames, minutes);
 	return 0;

@@ -17,4 +17,7 @@ void scene_reset_clock(void);
  */
 void scene_draw(int width, int height, double t, float fade);
 
+/* Limit klatek na wyjście z konfiguracji; 0 = bez limitu. */
+int scene_fps_cap(void);
+
 #endif
