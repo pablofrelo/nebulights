@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="pl">
+<html lang="en">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>nebulights</title>
@@ -21,17 +21,17 @@
 
 <canvas id="c"></canvas>
 <div id="ui">
-  <div><label>tempo</label><input id="speed" type="range" min="0" max="250" value="100"><span id="speedv">1.0×</span></div>
-  <div><label>ogon</label><input id="trail" type="range" min="6" max="45" value="22"><span id="trailv">2.2 s</span></div>
-  <div><label>mgła</label><input id="mist" type="range" min="0" max="200" value="100"><span id="mistv">1.0×</span></div>
-  <div><label>barwy</label><input id="hue" type="range" min="0" max="250" value="100"><span id="huev">1.0×</span></div>
-  <div><label>tło</label><input id="neb" type="range" min="0" max="400" value="100"><span id="nebv">1.0×</span></div>
-  <div><label>poświata</label><input id="bloom" type="range" min="0" max="300" value="100"><span id="bloomv">1.0×</span></div>
-  <div><label>jasność</label><input id="expo" type="range" min="15" max="300" value="100"><span id="expov">1.0×</span></div>
-  <div><label>tęcza</label><input id="fringe" type="range" min="0" max="40" value="10"><span id="fringev">0.010</span></div>
-  <div><label>gęstość</label><input id="dens" type="range" min="15" max="100" value="100"><span id="densv">100%</span></div>
-  <div><label>scena</label><span id="stat">—</span></div>
-  <div><button id="boom">eksplozja</button><button id="pair">+ para</button><button id="trio">+ trójka</button><button id="reset">reset</button></div>
+  <div><label>speed</label><input id="speed" type="range" min="0" max="250" value="100"><span id="speedv">1.0×</span></div>
+  <div><label>trail</label><input id="trail" type="range" min="6" max="45" value="22"><span id="trailv">2.2 s</span></div>
+  <div><label>mist</label><input id="mist" type="range" min="0" max="200" value="100"><span id="mistv">1.0×</span></div>
+  <div><label>hue</label><input id="hue" type="range" min="0" max="250" value="100"><span id="huev">1.0×</span></div>
+  <div><label>nebulae</label><input id="neb" type="range" min="0" max="400" value="100"><span id="nebv">1.0×</span></div>
+  <div><label>glow</label><input id="bloom" type="range" min="0" max="300" value="100"><span id="bloomv">1.0×</span></div>
+  <div><label>exposure</label><input id="expo" type="range" min="15" max="300" value="100"><span id="expov">1.0×</span></div>
+  <div><label>fringe</label><input id="fringe" type="range" min="0" max="40" value="10"><span id="fringev">0.010</span></div>
+  <div><label>density</label><input id="dens" type="range" min="15" max="100" value="100"><span id="densv">100%</span></div>
+  <div><label>scene</label><span id="stat">—</span></div>
+  <div><button id="boom">explode</button><button id="pair">+ pair</button><button id="trio">+ trio</button><button id="reset">reset</button></div>
 </div>
 <div id="hint">H — panel</div>
 
@@ -597,7 +597,7 @@ function gaussN(){ let s=0; for(let i=0;i<3;i++) s+=rnd2(); return s*0.577; }
 /* ================= WebGL ========================================= */
 const cv=document.getElementById("c");
 const gl=cv.getContext("webgl",{antialias:false,alpha:false,depth:false});
-if(!gl) document.body.innerHTML="<p style='color:#c66;padding:2em'>Brak WebGL.</p>";
+if(!gl) document.body.innerHTML="<p style='color:#c66;padding:2em'>WebGL is not available.</p>";
 
 function sh(t,s){const o=gl.createShader(t);gl.shaderSource(o,s);gl.compileShader(o);
   if(!gl.getShaderParameter(o,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(o));return o;}
@@ -1170,8 +1170,8 @@ function frame(now){
   drawQuad();
   gl.activeTexture(gl.TEXTURE0);
 
-  statEl.textContent=flyers.length+" obiektów · "+groups.length+" układów · "
-                    +mistN+" mgły · "+(sparkN-mistN)+" iskier";
+  statEl.textContent=flyers.length+" objects · "+groups.length+" groups · "
+                    +mistN+" mist · "+(sparkN-mistN)+" sparks";
 }
 
 /* ================= panel ========================================= */
