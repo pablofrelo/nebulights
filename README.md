@@ -3,7 +3,7 @@
 A screensaver for Wayland compositors, in the spirit of Sergio Duarte's
 *Voodoo Lights*, the 3dfx-era screensaver from the early 2000s.
 
-![nebulights](docs/demo.gif)
+![nebulights](docs/demo.webp)
 
 *[Polski](README.pl.md)*
 

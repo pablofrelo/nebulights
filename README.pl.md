@@ -3,7 +3,7 @@
 Wygaszacz ekranu dla kompozytorów Wayland w duchu *Voodoo Lights*
 Sergia Duarte, wygaszacza z czasów kart 3dfx z początku lat 2000.
 
-![nebulights](docs/demo.gif)
+![nebulights](docs/demo.webp)
 
 *[English](README.md)*
 
