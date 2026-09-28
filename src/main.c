@@ -29,6 +29,10 @@
 #include "inhibit.h"
 #include "scene.h"
 
+#ifndef VERSION
+#define VERSION "unknown"
+#endif
+
 #define FADE_SECONDS 1.5
 
 /* ------------------------------------------------------------------ */
@@ -545,7 +549,7 @@ int main(int argc, char **argv)
 		case 'n': v->oneshot = true; break;
 		case 'I': respect_inhibit = false; break;
 		case 'h': usage(argv[0]); return 0;
-		case 'V': printf("nebulights 0.1.0\n"); return 0;
+		case 'V': printf("nebulights %s\n", VERSION); return 0;
 		default:  usage(argv[0]); return 1;
 		}
 	}

@@ -1,8 +1,9 @@
 PREFIX          ?= /usr/local
+VERSION ?= 0.1.0
 WAYLAND_SCANNER ?= wayland-scanner
 
 CFLAGS  ?= -O2 -Wall -Wextra -pedantic
-CFLAGS  += -std=c11 -Isrc
+CFLAGS  += -std=c11 -Isrc -DVERSION='"$(VERSION)"'
 CFLAGS  += $(shell pkg-config --cflags wayland-client wayland-egl egl glesv2)
 LDLIBS  := $(shell pkg-config --libs wayland-client wayland-egl egl glesv2) -lm
 
