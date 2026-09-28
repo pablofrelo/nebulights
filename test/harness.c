@@ -1,4 +1,4 @@
-/* Przepuszcza scenę przez wiele minut symulacji i sprawdza inwarianty. */
+/* Runs the scene through many minutes of simulation and checks invariants. */
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -14,7 +14,7 @@ int main(int argc, char **argv)
 	for (int i = 0; i < frames; i++) {
 		double t = (double)i * dt;
 		float fade = t < 1.5 ? (float)(t / 1.5) : 1.0f;
-		/* jak przy trzech monitorach: różne rozmiary na przemian */
+		/* like three monitors: alternating sizes */
 		scene_draw(1920, 1200, t, fade);
 		scene_draw(2560, 1440, t, fade);
 	}

@@ -1,4 +1,4 @@
-/* Atrapy GLES2 — pozwalają przepuścić logikę sceny bez sprzętu. */
+/* GLES2 stubs — let the scene logic run without hardware. */
 #include <GLES2/gl2.h>
 #include <string.h>
 
@@ -35,7 +35,7 @@ GLenum glCheckFramebufferStatus(GLenum t){(void)t;return GL_FRAMEBUFFER_COMPLETE
 void glActiveTexture(GLenum t){(void)t;}
 
 void glBindBuffer(GLenum t,GLuint b){(void)t;(void)b;}
-/* kluczowe: czytamy cały deklarowany zakres, więc ASan złapie przekroczenie */
+/* the key part: read the whole declared range, so ASan catches overruns */
 void glBufferData(GLenum t,GLsizeiptr size,const void*data,GLenum u){
 	(void)t;(void)u;
 	if(data && size>0){ volatile char acc=0; const char*p=data;

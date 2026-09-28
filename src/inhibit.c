@@ -1,14 +1,14 @@
 /*
- * Wykrywanie blokad bezczynności zgłoszonych przez D-Bus.
+ * Detecting idle inhibitors reported over D-Bus.
  *
- * Istnieją dwa równoległe mechanizmy: waylandowy idle-inhibit-unstable-v1
- * i D-Busowy org.freedesktop.ScreenSaver. Protokół ext-idle-notify-v1
- * respektuje tylko ten pierwszy, a przeglądarki i część odtwarzaczy
- * używają drugiego — stąd wygaszacz wskakujący w trakcie filmu.
+ * There are two parallel mechanisms: Wayland's idle-inhibit-unstable-v1
+ * and D-Bus org.freedesktop.ScreenSaver. The ext-idle-notify-v1 protocol
+ * only honours the first one, while browsers and some players use the
+ * second — hence the screensaver kicking in during a video.
  *
- * PowerDevil zbiera zgłoszenia z obu dróg i wystawia HasInhibition,
- * więc pytamy jego. Poza Plasmą po prostu nie ma na czym odpowiedzieć
- * i wtedy nie blokujemy niczego.
+ * PowerDevil collects inhibitors from both and exposes HasInhibition,
+ * so we ask it. Outside Plasma there is nothing to answer, and then
+ * we inhibit nothing.
  */
 
 #include <stdbool.h>
@@ -20,7 +20,7 @@
 
 #include <systemd/sd-bus.h>
 
-/* PowerDevil::PolicyAgent::RequiredPolicies — nas interesuje ekran */
+/* PowerDevil::PolicyAgent::RequiredPolicies — we care about the screen */
 #define POLICY_CHANGE_SCREEN_SETTINGS 2
 
 static sd_bus *bus = NULL;
@@ -54,8 +54,8 @@ bool inhibit_active(void)
 		&err, &reply, "u", (unsigned)POLICY_CHANGE_SCREEN_SETTINGS);
 
 	if (r < 0) {
-		/* Brak PowerDevila (inne środowisko) — nie jest to błąd,
-		   ale powiedzmy o tym raz, żeby nie było zagadki. */
+		/* No PowerDevil (another desktop) — not an error,
+		   but say so once so it isn't a mystery. */
 		if (!warned) {
 			warned = true;
 			fprintf(stderr, "nebulights: PowerDevil not found on D-Bus, "
@@ -81,7 +81,7 @@ void inhibit_fini(void)
 	}
 }
 
-#else  /* zbudowane bez libsystemd */
+#else  /* built without libsystemd */
 
 bool inhibit_available(void) { return false; }
 bool inhibit_active(void)    { return false; }

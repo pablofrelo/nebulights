@@ -72,7 +72,7 @@ function perpBasis(d,u,v){
 }
 
 /* ================= barwy ========================================= */
-/* pełne nasycenie, wędrujący odcień — stąd psychodelia */
+/* full saturation, drifting hue — hence the psychedelia */
 function hsv(h,s,v,out){
   h=((h%1)+1)%1;
   const i=Math.floor(h*6), f=h*6-i;
@@ -89,15 +89,15 @@ function hsv(h,s,v,out){
 }
 
 /* ================= grawitacja ==================================== */
-const SOFT2=1.6*1.6;      /* zmiękczenie => orbity powoli precesują */
-const R_PERI_MIN=9.5;     /* zapas na dryf kamery — inaczej wchodzą w obiektyw */
+const SOFT2=1.6*1.6;      /* softening => orbits slowly precess */
+const R_PERI_MIN=9.5;     /* margin for camera drift — otherwise they fly into the lens */
 const R_APO_MAX =46.0;
 
-/* Środkiem masy jest sam obserwator. Kamera stoi w zerze i tylko się
-   obraca — obrót nie przesuwa atraktora, więc orbity zostają czyste.
-   Efekt: nie patrzysz na rój z zewnątrz, tylko siedzisz w jego środku. */
+/* The viewer is the centre of mass. The camera sits at the origin and only
+   turns — turning does not move the attractor, so the orbits stay clean.
+   Effect: you don't look at the swarm from outside, you sit inside it. */
 const HOLE={p:[0,0,0], gm:420};
-function seedAttractors(){ /* nic do rozstawiania */ }
+function seedAttractors(){ /* nothing to set up */ }
 
 function gravStep(a,dt){
   const at=a.att.p;
@@ -112,9 +112,9 @@ function gravStep(a,dt){
   return Math.hypot(a.pos[0]-px,a.pos[1]-py,a.pos[2]-pz);
 }
 
-/* orbita: r0 = punkt startowy, k = ułamek prędkości kołowej.
-   k=1 → okrąg, k<1 → r0 jest apocentrum, k>1 → perycentrum.
-   Małe k daje wydłużone elipsy, których fragment wygląda jak prosta. */
+/* orbit: r0 = start point, k = fraction of circular velocity.
+   k=1 → circle, k<1 → r0 is apoapsis, k>1 → periapsis.
+   Small k gives elongated ellipses whose segment looks like a straight line. */
 function initOrbit(a,r0,k){
   const at=a.att.p;
   const u=[rnd2(),rnd2(),rnd2()];
@@ -123,7 +123,7 @@ function initOrbit(a,r0,k){
 
   const t1=[0,0,0], t2=[0,0,0];
   perpBasis(u,t1,t2);
-  const ang=rnd()*TAU;            /* losowa płaszczyzna orbity */
+  const ang=rnd()*TAU;            /* random orbital plane */
   const w=[t1[0]*Math.cos(ang)+t2[0]*Math.sin(ang),
            t1[1]*Math.cos(ang)+t2[1]*Math.sin(ang),
            t1[2]*Math.cos(ang)+t2[2]*Math.sin(ang)];
@@ -133,42 +133,42 @@ function initOrbit(a,r0,k){
   a.vel=[w[0]*vc,w[1]*vc,w[2]*vc];
 }
 
-/* Orbita wokół obserwatora. Perycentrum nie może być zbyt małe, bo
-   obiekt przeleciałby przez płaszczyznę bliską i zniknął z hukiem. */
+/* An orbit around the viewer. Periapsis must not be too small, or the
+   object would fly through the near plane and vanish with a bang. */
 function randomOrbit(a){
   a.att=HOLE;
   for(let i=0;i<40;i++){
     const r0=7+rnd()*34;
-    const k = rnd()<0.45 ? 0.45+rnd()*0.34     /* wydłużona, "prosta" */
-                         : 0.82+rnd()*0.40;    /* bliżej okręgu       */
-    /* dla k<1 punkt startu jest apocentrum, dla k>1 perycentrum */
+    const k = rnd()<0.45 ? 0.45+rnd()*0.34     /* elongated, "straight" */
+                         : 0.82+rnd()*0.40;    /* closer to a circle  */
+    /* for k<1 the start point is apoapsis, for k>1 periapsis */
     const other=r0*(k*k)/Math.max(0.12,2-k*k);
     const peri=Math.min(r0,other), apo=Math.max(r0,other);
     if(peri<R_PERI_MIN || apo>R_APO_MAX) continue;
     initOrbit(a,r0,k);
     return;
   }
-  initOrbit(a,16+rnd()*12,0.95);              /* awaryjnie: prawie okrąg */
+  initOrbit(a,16+rnd()*12,0.95);              /* fallback: almost a circle */
 }
 
 /* ---- wloty zza kadru ------------------------------------------- */
-/* Obiekt nigdy nie materializuje się w polu widzenia: losujemy orbitę
-   tak długo, aż punkt startu wypada poza ekranem. Reszta to już
-   grawitacja — sam wleci w kadr. */
+/* An object never materialises in view: keep drawing orbits until the
+   start point lands off-screen. The rest is gravity — it flies into the
+   frame by itself. */
 let curVP=null, camEye=[0,0,30];
 function onScreen(p,margin){
   if(!curVP) return false;
   const m=curVP;
   const w=m[3]*p[0]+m[7]*p[1]+m[11]*p[2]+m[15];
-  if(w<=0.05) return false;                  /* za kamerą = poza kadrem */
+  if(w<=0.05) return false;                  /* behind the camera = off-screen */
   const x=m[0]*p[0]+m[4]*p[1]+m[8]*p[2]+m[12];
   const y=m[1]*p[0]+m[5]*p[1]+m[9]*p[2]+m[13];
   return Math.abs(x)<=w*margin && Math.abs(y)<=w*margin;
 }
-/* Baza prostopadła do kierunku lotu liczona od zera potrafi skokowo
-   obrócić się o 90 stopni, gdy prowadzący zmieni kierunek — członkowie
-   teleportowali się wtedy na drugą stronę. Zamiast tego przenosimy
-   poprzednią bazę: odejmujemy składową wzdłuż nowego kierunku. */
+/* A basis perpendicular to the flight direction computed from scratch can
+   flip by 90 degrees when the leader changes direction — members used to
+   teleport to the other side. Instead, carry the previous basis over:
+   subtract its component along the new direction. */
 function carryBasis(g,ld){
   let ux=g.u[0],uy=g.u[1],uz=g.u[2];
   const dot=ux*ld[0]+uy*ld[1]+uz*ld[2];
@@ -184,17 +184,17 @@ function carryBasis(g,ld){
 function respawnOffscreen(a){
   for(let i=0;i<60;i++){
     randomOrbit(a);
-    /* Tuż obok kamery nawet mały odskok członka układu wrzuca go
-       w kadr — wymagamy dystansu. */
+    /* Right next to the camera even a small offset of a group member throws
+       it into the frame — require some distance. */
     const dc=Math.hypot(a.pos[0]-camEye[0],a.pos[1]-camEye[1],a.pos[2]-camEye[2]);
     if(dc<12) continue;
-    /* margines z zapasem na promień krążenia w układach */
+    /* margin with room for the circling radius in groups */
     if(!onScreen(a.pos,1.22)) return true;
   }
-  return false;                              /* poddajemy się po 60 próbach */
+  return false;                              /* give up after 60 attempts */
 }
 
-/* ================= iskry, para, mgła ============================= */
+/* ================= sparks, steam, mist =========================== */
 const MAX_SPARK=110000;
 const kx=new Float32Array(MAX_SPARK), ky=new Float32Array(MAX_SPARK), kz=new Float32Array(MAX_SPARK);
 const kvx=new Float32Array(MAX_SPARK), kvy=new Float32Array(MAX_SPARK), kvz=new Float32Array(MAX_SPARK);
@@ -245,18 +245,18 @@ function explode(x,y,z,col){
   }
   for(let i=0;i<26;i++) addMist(x,y,z,col,1.6);
 }
-/* Wybuch na drugim planie — daleko, więc rozchodzi się wolno i długo.
-   Powłoka jest rzadka i duża, żeby czytała się jako zdarzenie w tle,
-   a nie jako coś, co zaraz na nas spadnie. */
+/* An explosion in the background — far away, so it spreads slowly and
+   for long. The shell is sparse and large so it reads as a background
+   event, not as something about to fall on us. */
 function farBurst(x,y,z,hue){
   const c=[0,0,0]; hsv(hue,0.85,1.0,c);
   const r=Math.hypot(x,y,z)||1;
-  const scale=r/70;                       /* dalej => większe i wolniejsze */
+  const scale=r/70;                       /* farther => bigger and slower */
 
   addSpark(x,y,z,0,0,0,[1.6,1.5,1.3],0.9,60*scale,0);
   addSpark(x,y,z,0,0,0,[c[0]*1.3,c[1]*1.3,c[2]*1.3],1.7,40*scale,0);
 
-  /* powłoka uderzeniowa */
+  /* shock shell */
   const n=180+((rnd()*120)|0);
   for(let i=0;i<n;i++){
     let dx=rnd2(),dy=rnd2(),dz=rnd2();
@@ -266,7 +266,7 @@ function farBurst(x,y,z,hue){
              rnd()<0.3?[0.9,0.85,0.75]:c,
              2.6+rnd()*3.6, (5+rnd()*10)*scale, 0);
   }
-  /* i kłąb, który zostaje po wszystkim */
+  /* and the cloud that stays after it all */
   for(let i=0;i<34;i++)
     addSpark(x+gaussN()*3*scale, y+gaussN()*3*scale, z+gaussN()*3*scale,
              gaussN()*0.5, gaussN()*0.5, gaussN()*0.5,
@@ -284,13 +284,13 @@ function microBurst(x,y,z,col){
 }
 
 /* ================= lotniki ======================================= */
-/* Gęstsze próbkowanie => wstęgi gładkie na ciasnych zakrętach.
-   Sufit próbek musi pokryć najdłuższy ogon przy największej prędkości. */
+/* Denser sampling => smooth ribbons in tight turns.
+   The sample cap must cover the longest tail at the highest speed. */
 const SAMPLE_STEP=0.07;
 const MAX_SAMPLES=1400;
 const MAX_FLYERS=190;
 let TRAIL_LIFE=2.2, MIST_MUL=1.0, HUE_MUL=1.0, NEB_MUL=1.0;
-let DENSITY=1.0;   /* ułamek czynnych obiektów — do dławienia na słabszym sprzęcie */
+let DENSITY=1.0;   /* fraction of active objects — for throttling on weaker hardware */
 let BLOOM_MUL=1.0;
 let EXPOSURE=1.0, FRINGE=0.010;
 
@@ -302,7 +302,7 @@ function newTrail(){
   return {
     sx:new Float32Array(MAX_SAMPLES), sy:new Float32Array(MAX_SAMPLES),
     sz:new Float32Array(MAX_SAMPLES), sa:new Float32Array(MAX_SAMPLES),
-    /* barwa zapamiętana w chwili emisji => ogon jest gradientem */
+    /* colour stored at emission time => the tail is a gradient */
     scr:new Float32Array(MAX_SAMPLES), scg:new Float32Array(MAX_SAMPLES),
     scb:new Float32Array(MAX_SAMPLES),
     n:0, acc:0,
@@ -315,7 +315,7 @@ function makeFlyer(ribbon,hue,hueRate){
   const f=Object.assign(newTrail(),{
     ribbon:rb,
     hue: hue!==undefined?hue:rnd(),
-    /* różne tempa wędrówki barwy — część wolno, część agresywnie */
+    /* different hue drift speeds — some slow, some aggressive */
     hueRate: hueRate!==undefined?hueRate:(rnd()<0.4?0.010+rnd()*0.030:0.055+rnd()*0.14),
     col:[1,1,1],
     width: rb===R_TUBE ?0.22+rnd()*0.20
@@ -345,7 +345,7 @@ function makeGroup(count){
   const g={
     lead, members:[],
     radius:0.6+rnd()*1.5,
-    /* każda para/trójka wiruje we własnym tempie i kierunku */
+    /* every pair/trio spins at its own speed and direction */
     omega:(0.7+rnd()*4.2)*(rnd()<0.5?-1:1),
     phase:rnd()*TAU,
     fuse:15+rnd()*30,
@@ -359,8 +359,8 @@ function makeGroup(count){
     f.group=g; f.gIndex=i;
     g.members.push(f);
   }
-  /* Od razu na pozycjach orbitalnych wokół prowadzącego — inaczej
-     pierwszy krok symulacji teleportowałby ich z losowych miejsc. */
+  /* Straight onto orbital positions around the leader — otherwise
+     the first simulation step would teleport them from random places. */
   const vl=Math.hypot(lead.vel[0],lead.vel[1],lead.vel[2])||1;
   perpBasis([lead.vel[0]/vl,lead.vel[1]/vl,lead.vel[2]/vl],g.u,g.v);
   g.members.forEach((f,i)=>{
@@ -394,7 +394,7 @@ function resetTrail(f){
 }
 
 function flyerTail(f,t,dt,step){
-  /* wędrówka odcienia */
+  /* hue drift */
   f.hue+=f.hueRate*HUE_MUL*dt;
   hsv(f.hue,1.0,1.0,f.col);
 
@@ -410,8 +410,8 @@ function flyerTail(f,t,dt,step){
 
   const bx=f.pos[0],by=f.pos[1],bz=f.pos[2];
 
-  /* ISKRY — sypią się z samego obiektu, na wszystkie strony,
-     krótko żyją, więc trzymają się przy nim */
+  /* SPARKS — shed from the object itself, in all directions,
+     short-lived, so they stay close to it */
   if(f.ribbon===R_SPARK){
     f.sparkAcc+=dt*70;
     let n=f.sparkAcc|0; f.sparkAcc-=n;
@@ -424,21 +424,21 @@ function flyerTail(f,t,dt,step){
                rnd()<0.3?[1,1,1]:f.col, 0.22+rnd()*0.34, 1.3+rnd()*2.0, 0);
     }
   }
-  /* koraliki wzdłuż toru */
+  /* beads along the path */
   if(f.ribbon===R_BEAD){
     f.beadAcc+=step;
     if(f.beadAcc>0.5){ f.beadAcc=0;
       addSpark(bx,by,bz,0,0,0,f.col,1.6,4.5+rnd()*2.5,0); }
   }
 
-  /* PARA / DYM — wyłącznie z ogona, nie z obiektu */
+  /* STEAM / SMOKE — only from the tail, never from the object */
   if(MIST_MUL>0 && f.n>4){
     const rate=(f.ribbon===R_VAPOR?26:9)*MIST_MUL;
     f.mistAcc+=dt*rate;
     let n=f.mistAcc|0; f.mistAcc-=n;
     if(n>6) n=6;
     for(let i=0;i<n;i++){
-      /* losowa próbka ze starszej części ogona */
+      /* a random sample from the older part of the tail */
       const j=(rnd()*Math.max(1,f.n-2))|0;
       addMist(f.sx[j],f.sy[j],f.sz[j],
               [f.scr[j],f.scg[j],f.scb[j]],
@@ -456,8 +456,8 @@ function stepAll(t,dt){
     if(f.group) continue;
     if(sleeping(f)) continue;
     if(f.waiting){
-      /* nie znaleźliśmy jeszcze miejsca poza kadrem — czekamy w ukryciu,
-         kamera się przesuwa, więc za chwilę się uda */
+      /* no spot outside the frame yet — wait hidden,
+         the camera keeps moving, so it will work in a moment */
       if(respawnOffscreen(f)){ f.waiting=false; resetTrail(f); }
       continue;
     }
@@ -529,7 +529,7 @@ function stepAll(t,dt){
   }
 }
 
-/* ================= gwiazdy tła =================================== */
+/* ================= background stars ============================== */
 const N_BG=9000;
 const bg=new Float32Array(N_BG*7);
 function seedBG(){
@@ -546,19 +546,19 @@ function seedBG(){
   }
 }
 
-/* ================= mgławice tła ================================== */
-/* Wielkie, bardzo ciemne obłoki daleko za akcją. Nie ruszają się —
-   ruch daje im obrót kamery. Każdy oddycha własnym rytmem, żeby tło
-   nie było martwą tapetą. */
+/* ================= background nebulae ============================ */
+/* Huge, very dark clouds far behind the action. They don't move —
+   the camera's rotation moves them. Each breathes at its own rhythm so
+   the background isn't a dead wallpaper. */
 const N_NEB=2400;
 const nebPos=new Float32Array(N_NEB*3);
 const nebCol=new Float32Array(N_NEB*3);
-const nebR=new Float32Array(N_NEB);        /* promień w jednostkach świata */
+const nebR=new Float32Array(N_NEB);        /* radius in world units */
 const nebPhase=new Float32Array(N_NEB);
 const nebRate=new Float32Array(N_NEB);
 
 function seedNebulae(){
-  /* kilka skupisk zamiast równomiernej sieczki — obłoki mają kształt */
+  /* a few clusters instead of an even mush — the clouds have a shape */
   const clumps=5+((rnd()*4)|0);
   const centers=[];
   for(let c=0;c<clumps;c++){
@@ -576,8 +576,8 @@ function seedNebulae(){
     nebPos[i*3]  =c.p[0]+gaussN()*c.spread;
     nebPos[i*3+1]=c.p[1]+gaussN()*c.spread;
     nebPos[i*3+2]=c.p[2]+gaussN()*c.spread;
-    /* rozrzut potrafi wepchnąć obłok w strefę lotów (apocentrum 46) —
-       taki kolos pochłonąłby całą akcję, więc wypychamy go na zewnątrz */
+    /* the spread can push a puff into the flight zone (apoapsis 46) —
+       such a giant would swallow the action, so push it outwards */
     const rr=Math.hypot(nebPos[i*3],nebPos[i*3+1],nebPos[i*3+2])||1;
     if(rr<58){
       const k=58/rr;
@@ -586,7 +586,7 @@ function seedNebulae(){
     hsv(c.hue+rnd2()*0.07, 0.75+rnd()*0.25, 1.0, c3);
     const b=0.006+Math.pow(rnd(),2.0)*0.026;
     nebCol[i*3]=c3[0]*b; nebCol[i*3+1]=c3[1]*b; nebCol[i*3+2]=c3[2]*b;
-    /* promień w jednostkach świata — billboard, więc bez limitu pikseli */
+    /* radius in world units — a billboard, so no pixel limit */
     nebR[i]=16+rnd()*54;
     nebPhase[i]=rnd()*TAU;
     nebRate[i]=0.05+rnd()*0.16;
@@ -622,8 +622,8 @@ uniform float uSoft, uHeat;
 void main(){
   float s2=vSide*vSide;
   float a=exp(-s2*uSoft);
-  /* Wąska oś wstęgi jest gorętsza od brzegów — rozjaśniamy ją ku bieli
-     proporcjonalnie do własnej jasności, jak rozgrzany metal. */
+  /* The narrow axis of a ribbon is hotter than its edges — brighten it
+     towards white in proportion to its own brightness, like glowing metal. */
   float core=exp(-s2*uSoft*7.0);
   float lum=max(max(vCol.r,vCol.g),vCol.b);
   gl_FragColor=vec4(vCol*a + vec3(lum)*core*uHeat, 1.0);
@@ -658,8 +658,8 @@ void main(){
   gl_FragColor=vec4(vCol*exp(-r2*7.0)*0.5,1.0);
 }`;
 
-/* Mgławice jako kwady zwrócone do kamery. Punkty odpadły: mobilne GPU
-   obcinają gl_PointSize do 64-128 px, więc wielkie obłoki znikały. */
+/* Nebulae as camera-facing quads. Points were dropped: mobile GPUs
+   clamp gl_PointSize to 64-128 px, so large clouds vanished. */
 const VS_NEB=`
 attribute vec3 aPos; attribute vec3 aCol; attribute vec2 aUV;
 uniform mat4 uMVP;
@@ -671,21 +671,21 @@ varying vec3 vCol; varying vec2 vUV;
 void main(){
   float r2=dot(vUV,vUV);
   if(r2>1.0) discard;
-  float a=exp(-r2*2.6)-0.074;      /* miękki brzeg, zero na krawędzi */
+  float a=exp(-r2*2.6)-0.074;      /* soft edge, zero at the border */
   if(a<=0.0) discard;
   gl_FragColor=vec4(vCol*a,1.0);
 }`;
 
 const VS_QUAD=`attribute vec2 aPos; varying vec2 vUV;
 void main(){ vUV=aPos*0.5+0.5; gl_Position=vec4(aPos,0.0,1.0); }`;
-/* wyciąg jasnych partii — źródło poświaty */
+/* bright-pass — the source of the glow */
 const FS_BRIGHT=`precision highp float; varying vec2 vUV;
 uniform sampler2D uSrc; uniform float uThresh, uScale;
 void main(){
   vec3 c=texture2D(uSrc,vUV).rgb;
   gl_FragColor=vec4(max(c-uThresh,0.0)*uScale,1.0);
 }`;
-/* rozmycie rozdzielne, 9 próbek */
+/* separable blur, 9 taps */
 const FS_BLUR=`precision highp float; varying vec2 vUV;
 uniform sampler2D uSrc; uniform vec2 uDir;
 void main(){
@@ -703,8 +703,8 @@ uniform vec2 uRes;
 void main(){
   vec3 c=texture2D(uScene,vUV).rgb;
 
-  /* Szeroka aureola próbkowana z lekkim rozsunięciem kanałów —
-     stąd tęczowa obwódka wokół najjaśniejszych miejsc. */
+  /* The wide halo is sampled with a slight channel split —
+     hence the rainbow fringe around the brightest spots. */
   vec2 d=(vUV-0.5)*uFringe;
   vec3 wide=vec3(texture2D(uB8,vUV+d).r,
                  texture2D(uB8,vUV).g,
@@ -715,8 +715,8 @@ void main(){
   c=c/(1.0+c*0.30);
   c=pow(c,vec3(0.4545));
 
-  /* Rozproszenie błędu kwantyzacji — bez tego mgławice i mgła
-     rozwarstwiają się w widoczne pasy. */
+  /* Dithering the quantisation error — without it nebulae and mist
+     split into visible bands. */
   float n=fract(sin(dot(vUV*uRes,vec2(12.9898,78.233)))*43758.5453);
   c+=(n-0.5)*(1.0/255.0);
 
@@ -749,12 +749,12 @@ const zScene=gl.getUniformLocation(pPres,"uScene"),
 const pNeb=link(VS_NEB,FS_NEB,["aPos","aCol","aUV"]);
 const nMVP=gl.getUniformLocation(pNeb,"uMVP");
 const vboNeb=gl.createBuffer();
-/* 6 wierzchołków na obłok, 8 pól na wierzchołek */
+/* 6 vertices per puff, 8 fields per vertex */
 const nebBuf=new Float32Array(N_NEB*6*8);
 let nebV=0;
 
-/* Kwady zwrócone do kamery: rozpinamy je na wektorach prawo/góra
-   wyciągniętych z macierzy widoku. */
+/* Camera-facing quads: spanned on the right/up vectors
+   taken from the view matrix. */
 function buildNebulae(view){
   const rx=view[0], ry=view[4], rz=view[8];
   const ux=view[1], uy=view[5], uz=view[9];
@@ -797,10 +797,10 @@ const vboRib=gl.createBuffer(), vboPts=gl.createBuffer(),
 gl.bindBuffer(gl.ARRAY_BUFFER,vboQuad);
 gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),gl.STATIC_DRAW);
 
-/* ================= wstęgi ======================================== */
-/* Wierzchołek: środek(3) + barwa(3) + odsunięcie w bok(3) + strona(1).
-   Szerokość i jasność są mnożnikami w shaderze, więc geometrię budujemy
-   RAZ na klatkę, a rysujemy dwa razy (poświata + rdzeń). */
+/* ================= ribbons ======================================= */
+/* Vertex: centre(3) + colour(3) + side offset(3) + side(1).
+   Width and brightness are multipliers in the shader, so the geometry is
+   built ONCE per frame and drawn twice (glow + core). */
 const RIB_STRIDE=10;
 const MAX_RIB_V=MAX_FLYERS*MAX_SAMPLES*2;
 const ribBuf=new Float32Array(MAX_RIB_V*RIB_STRIDE);
@@ -891,18 +891,18 @@ function buildPoints(){
 /* ================= cel renderowania ============================== */
 let fbo=null,tex=null,fw=0,fh=0;
 
-/* ---- łańcuch poświaty ------------------------------------------- */
-/* Dwa poziomy: ćwiartka rozdzielczości daje ciasną poświatę wokół
-   wstęg, ósemka szeroką aureolę. Rozmycie rozdzielne, więc koszt
-   rośnie liniowo, nie kwadratowo. */
+/* ---- glow chain ------------------------------------------------ */
+/* Two levels: quarter resolution gives the tight glow around the
+   ribbons, eighth the wide halo. The blur is separable, so the cost
+   grows linearly, not quadratically. */
 const BL={ w4:0,h4:0,w8:0,h8:0, t4a:null,t4b:null,t8a:null,t8b:null,
            f4a:null,f4b:null,f8a:null,f8b:null };
 
 /* ---- HDR --------------------------------------------------------
-   Bufor 8-bitowy ścina addytywne sumowanie na 1.0: rozżarzony rdzeń
-   wstęgi i zwykła poświata lądują w tej samej bieli. Half-float
-   zachowuje prawdziwe wartości, więc bloom ma co odróżniać.
-   Jak sprzęt nie umie — schodzimy na 8 bitów bez awantury. */
+   An 8-bit buffer clips additive blending at 1.0: a white-hot ribbon
+   core and ordinary glow end up as the same white. Half-float keeps the
+   real values, so bloom has something to tell apart.
+   If the hardware can't do it — fall back to 8 bits without a fuss. */
 const extHF  = gl.getExtension("OES_texture_half_float");
 const extHFL = gl.getExtension("OES_texture_half_float_linear");
 gl.getExtension("EXT_color_buffer_half_float");
@@ -922,7 +922,7 @@ let TEX_TYPE = gl.UNSIGNED_BYTE, HDR=false, TEX_FILTER=gl.LINEAR;
   gl.deleteFramebuffer(f); gl.deleteTexture(t);
   if(ok){
     TEX_TYPE=HALF; HDR=true;
-    /* filtrowanie liniowe half-floatów bywa nieobsługiwane */
+    /* linear filtering of half-floats is sometimes unsupported */
     TEX_FILTER = extHFL ? gl.LINEAR : gl.NEAREST;
   }
 })();
@@ -969,14 +969,14 @@ function blurInto(dstFbo,srcTex,w,h,dx,dy){
 function runBloom(){
   gl.disable(gl.BLEND);
 
-  /* wyciąg jasnych partii prosto do ćwiartki */
+  /* bright-pass straight into the quarter buffer */
   gl.bindFramebuffer(gl.FRAMEBUFFER,BL.f4a);
   gl.viewport(0,0,BL.w4,BL.h4);
   gl.useProgram(pBright);
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D,tex);
   gl.uniform1i(brSrc,0);
-  /* w HDR próg leży powyżej bieli — świeci tylko to, co naprawdę gorące */
+  /* in HDR the threshold is above white — only what is really hot glows */
   gl.uniform1f(brThresh, HDR?0.75:0.085);
   gl.uniform1f(brScale,  HDR?0.85:1.30);
   drawQuad();
@@ -984,7 +984,7 @@ function runBloom(){
   blurInto(BL.f4b,BL.t4a,BL.w4,BL.h4,1/BL.w4,0);
   blurInto(BL.f4a,BL.t4b,BL.w4,BL.h4,0,1/BL.h4);
 
-  /* poziom szerokiej aureoli — z już rozmytej ćwiartki */
+  /* wide halo level — from the already blurred quarter */
   blurInto(BL.f8a,BL.t4a,BL.w8,BL.h8,1/BL.w8,0);
   blurInto(BL.f8b,BL.t8a,BL.w8,BL.h8,0,1/BL.h8);
   blurInto(BL.f8a,BL.t8b,BL.w8,BL.h8,2/BL.w8,0);
@@ -1017,7 +1017,7 @@ function bindPts(vbo,buf,n){
   gl.drawArrays(gl.POINTS,0,n);
   gl.disableVertexAttribArray(0);gl.disableVertexAttribArray(1);gl.disableVertexAttribArray(2);
 }
-/* geometria jest już w VBO — wgrywamy ją raz, rysujemy wielokrotnie */
+/* geometry is already in the VBO — upload once, draw many times */
 function uploadRibbons(){
   gl.bindBuffer(gl.ARRAY_BUFFER,vboRib);
   gl.bufferData(gl.ARRAY_BUFFER,ribBuf.subarray(0,ribV*RIB_STRIDE),gl.STREAM_DRAW);
@@ -1043,14 +1043,14 @@ function drawRibbons(soft,width,gain,heat){
   gl.disableVertexAttribArray(2);gl.disableVertexAttribArray(3);
 }
 
-/* ================= świat ========================================= */
+/* ================= world ========================================= */
 function build(){
   flyers.length=0; groups.length=0; sparkN=0;
   seedBG();
   seedNebulae();
   seedAttractors();
-  /* Obserwator siedzi w środku sfery i widzi jej ~15%, więc żeby
-     w kadrze było kilkanaście obiektów, w scenie musi ich być kilkadziesiąt. */
+  /* The viewer sits inside a sphere and sees ~15% of it, so to have a dozen
+     objects in the frame, the scene needs several dozen. */
   for(let i=0;i<14;i++) makeGroup(2);
   for(let i=0;i<9;i++)  makeGroup(3);
   for(let i=0;i<48;i++) makeFlyer(R_THREAD);
@@ -1060,7 +1060,7 @@ function build(){
   for(let i=0;i<12;i++) makeFlyer(R_TUBE);
 }
 
-/* ================= pętla ========================================= */
+/* ================= loop ========================================== */
 const proj=new Float32Array(16), view=new Float32Array(16), vp=new Float32Array(16);
 let speed=1.0, lastMs=performance.now(), simT=0, microT=1.2, farT=3.0;
 const statEl=document.getElementById("stat");
@@ -1083,9 +1083,9 @@ function frame(now){
   if(dt>0.05) dt=0.05;
   dt*=speed; simT+=dt;
 
-  /* kamera najpierw — test widoczności przy wlotach jej potrzebuje */
-  /* Obserwator siedzi wewnątrz roju i powoli się rozgląda — obiekty
-     przelatują obok, nad głową i za plecami. */
+  /* camera first — the visibility test for entries needs it */
+  /* The viewer sits inside the swarm and slowly looks around — objects
+     fly past, overhead and behind. */
   const camR=3.2+1.4*Math.sin(simT*0.013);
   const camA=simT*0.041;
   const eye=[Math.cos(camA)*camR, Math.sin(camA)*camR, 1.4*Math.sin(simT*0.019)];
@@ -1101,12 +1101,12 @@ function frame(now){
   curVP=vp;
   camEye=eye;
 
-  /* mały krok całkowania — orbity blisko centrów są szybkie */
+  /* small integration step — orbits close to the centre are fast */
   const sub=Math.min(4,1+((dt/0.008)|0));
   for(let i=0;i<sub;i++) stepAll(simT,dt/sub);
   stepSparks(dt);
 
-  /* wybuchy na drugim planie — rzadkie, żeby były zdarzeniem */
+  /* background explosions — rare, so they feel like an event */
   farT-=dt;
   if(farT<=0){
     farT=5+rnd()*11;
@@ -1145,8 +1145,8 @@ function frame(now){
 
   buildRibbons(eye);
   uploadRibbons();
-  drawRibbons(1.6, 2.6, 0.26, 0.0);   /* szeroka miękka poświata */
-  drawRibbons(7.0, 1.0, 1.00, 0.9);   /* wąski rdzeń, rozżarzony  */
+  drawRibbons(1.6, 2.6, 0.26, 0.0);   /* wide soft glow */
+  drawRibbons(7.0, 1.0, 1.00, 0.9);   /* narrow white-hot core    */
 
   gl.useProgram(pPts);
   gl.uniformMatrix4fv(pMVP,false,vp);
@@ -1202,8 +1202,8 @@ document.getElementById("reset").onclick=()=>{build();simT=0;};
 window.onkeydown=e=>{if(e.key==="h"||e.key==="H")
   ui.style.display=ui.style.display==="none"?"":"none";};
 
-/* HDR nie ścina sumowania, więc scena wychodzi jaśniejsza —
-   ustawiamy suwak jasności odpowiednio do wykrytego trybu. */
+/* HDR doesn't clip blending, so the scene comes out brighter —
+   set the exposure slider to match the detected mode. */
 if(HDR){
   EXPOSURE=0.55;
   exEl.value=Math.round(EXPOSURE*100);

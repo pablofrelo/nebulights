@@ -1,11 +1,11 @@
 /*
- * nebulights — scena: świetlne wstęgi krążące wokół obserwatora.
+ * nebulights — the scene: glowing ribbons orbiting the viewer.
  *
- * Obserwator siedzi w środku masy i tylko obraca spojrzenie — obrót nie
- * przesuwa atraktora, więc orbity zostają czystymi elipsami.
+ * The viewer sits at the centre of mass and only turns their gaze — turning
+ * does not move the attractor, so orbits stay clean ellipses.
  *
- * Warstwa GL: GLES2 + bufor half-float (gdy dostępny), poświata
- * dwupoziomowa, wszystko sumowane addytywnie.
+ * GL side: GLES2 + half-float buffer (when available), two-level glow,
+ * everything blended additively.
  */
 
 #define _POSIX_C_SOURCE 200809L
@@ -26,13 +26,13 @@
 #define GL_HALF_FLOAT_OES 0x8D61
 #endif
 
-/* ================= parametry ===================================== */
+/* ================= parameters ==================================== */
 
 #define TAU 6.283185307179586f
 
 #define MAX_FLYERS      190
 #define MAX_SAMPLES     900
-#define SAMPLE_STEP     0.07f   /* wartość domyślna */
+#define SAMPLE_STEP     0.07f   /* default value */
 #define MAX_SPARK    110000
 #define N_BG_MAX       9000
 #define N_NEB_MAX      2400
@@ -43,8 +43,8 @@
 #define R_PERI_MIN      9.5f
 #define R_APO_MAX      46.0f
 
-/* ---- ustawienia wczytywane z pliku ------------------------------
-   Wartości domyślne; nadpisywane przez ~/.config/nebulights.conf */
+/* ---- settings read from the config file ------------------------
+   Defaults; overridden by ~/.config/nebulights.conf */
 static float TRAIL_LIFE = 2.2f;
 static float MIST_MUL   = 1.0f;
 static float HUE_MUL    = 1.0f;
@@ -54,19 +54,19 @@ static float FRINGE     = 0.010f;
 static float SAMPLE_STEP_CFG = SAMPLE_STEP;
 
 static int   N_BG       = N_BG_MAX;
-static int   N_NEB      = 2400;   /* patrz uwaga o wypełnianiu w README */
-static int   FLYER_SCALE_PCT = 100;   /* skala obsady w procentach */
-static int   BLOOM_LEVELS = 2;        /* 0 = bez poświaty, 1 = ciasna, 2 = obie */
+static int   N_NEB      = 2400;   /* see the note on fill cost in README */
+static int   FLYER_SCALE_PCT = 100;   /* cast size in percent */
+static int   BLOOM_LEVELS = 2;        /* 0 = no glow, 1 = tight, 2 = both */
 static int   ALLOW_HDR = 1;
-static float NEB_SIZE = 1.8f;   /* mnożnik promienia obłoków */
-static int   FPS_CAP = 0;       /* 0 = bez ograniczenia */
-static int   PALETTE = 0;       /* 0 = tęcza, 1 = gruvbox, 2 = nostromo */
-/* ---- plik konfiguracyjny ----------------------------------------
-   ~/.config/nebulights.conf, format "klucz wartość", # to komentarz.
-   Brak pliku nie jest błędem — po prostu zostają wartości domyślne. */
+static float NEB_SIZE = 1.8f;   /* multiplier for nebula puff radius */
+static int   FPS_CAP = 0;       /* 0 = uncapped */
+static int   PALETTE = 0;       /* 0 = rainbow, 1 = gruvbox, 2 = nostromo */
+/* ---- config file -----------------------------------------------
+   ~/.config/nebulights.conf, format "key value", # starts a comment.
+   A missing file is not an error — defaults simply stay. */
 
 static float DENSITY = 1.0f;
-static float EXPOSURE_CFG = -1.0f;   /* <0 = dobierz automatycznie */
+static float EXPOSURE_CFG = -1.0f;   /* <0 = pick automatically */
 
 struct cfg_entry {
 	const char *key;
@@ -137,7 +137,7 @@ static void config_load(void)
 			continue;
 
 		char key[64], val[64];
-		/* akceptujemy "klucz wartość" i "klucz = wartość" */
+		/* accept both "key value" and "key = value" */
 		if (sscanf(p, "%63s = %63s", key, val) == 2 ||
 		    sscanf(p, "%63s %63s", key, val) == 2)
 			config_apply(key, val);
@@ -146,10 +146,10 @@ static void config_load(void)
 	fprintf(stderr, "nebulights: loaded %s\n", path);
 }
 
-/* rodzaje śladu */
+/* trail kinds */
 enum ribbon { R_THREAD, R_SPARK, R_VAPOR, R_BEAD, R_TUBE, R_COUNT };
 
-/* ================= drobiazgi matematyczne ======================== */
+/* ================= small maths ================================== */
 
 static uint32_t rng_state = 0x9E3779B9u;
 
@@ -175,7 +175,7 @@ static void vnorm(float *v)
 	if (l > 1e-6f) { v[0]/=l; v[1]/=l; v[2]/=l; }
 }
 
-/* dwa wektory prostopadłe do zadanego kierunku */
+/* two vectors perpendicular to a given direction */
 static void perp_basis(const float *d, float *u, float *v)
 {
 	float ax[3] = { 0.0f, 1.0f, 0.0f };
@@ -192,21 +192,21 @@ static void perp_basis(const float *d, float *u, float *v)
 }
 
 static const float PAL_GRUV[5][3] = {
-        {0.98f, 0.74f, 0.18f},  /* żółty    #fabd2f */
-        {1.00f, 0.50f, 0.10f},  /* pomarańcz #fe8019 */
-        {0.98f, 0.29f, 0.20f},  /* czerwony #fb4934 */
-        {0.72f, 0.73f, 0.15f},  /* zielony  #b8bb26 */
+        {0.98f, 0.74f, 0.18f},  /* yellow   #fabd2f */
+        {1.00f, 0.50f, 0.10f},  /* orange   #fe8019 */
+        {0.98f, 0.29f, 0.20f},  /* red      #fb4934 */
+        {0.72f, 0.73f, 0.15f},  /* green    #b8bb26 */
         {0.56f, 0.75f, 0.49f},  /* aqua     #8ec07c */
 };
 static const float PAL_NOST[5][3] = {
-        {0.20f, 1.00f, 0.45f},  /* fosforowa zieleń */
-        {0.55f, 1.00f, 0.75f},  /* blada zieleń monitora */
-        {1.00f, 0.69f, 0.00f},  /* bursztyn */
-        {1.00f, 0.45f, 0.05f},  /* alarmowy pomarańcz */
-        {0.10f, 0.60f, 0.25f},  /* ciemna zieleń */
+        {0.20f, 1.00f, 0.45f},  /* phosphor green */
+        {0.55f, 1.00f, 0.75f},  /* pale monitor green */
+        {1.00f, 0.69f, 0.00f},  /* amber */
+        {1.00f, 0.45f, 0.05f},  /* alarm orange */
+        {0.10f, 0.60f, 0.25f},  /* dark green */
 };
 
-/* pełne nasycenie, wędrujący odcień — stąd psychodelia */
+/* full saturation, drifting hue — hence the psychedelia */
 static void hsv(float h, float s, float v, float *out)
 {
 	if (PALETTE > 0) {
@@ -237,7 +237,7 @@ static void hsv(float h, float s, float v, float *out)
 	default:out[0]=v; out[1]=p; out[2]=q; break;
 	}
 }
-/* ---- macierze 4x4, układ kolumnowy jak w OpenGL ---------------- */
+/* ---- 4x4 matrices, column-major as in OpenGL ------------------- */
 
 static void m_persp(float *m, float fovy, float asp, float zn, float zf)
 {
@@ -282,11 +282,11 @@ static void m_mul(const float *a, const float *b, float *o)
 	memcpy(o, r, sizeof(r));
 }
 
-/* ================= iskry, para, mgła ============================= */
+/* ================= sparks, steam, mist =========================== */
 /*
- * Jedna tablica na wszystko, co jest punktem. Pole `grow` rozdziela
- * dwa zachowania: iskra kurczy się i gaśnie szybko, obłoczek pary
- * puchnie i blednie powoli.
+ * One array for everything that is a point. The `grow` field splits two
+ * behaviours: a spark shrinks and fades fast, a puff of steam swells
+ * and fades slowly.
  */
 struct sparks {
 	float x[MAX_SPARK],  y[MAX_SPARK],  z[MAX_SPARK];
@@ -325,7 +325,7 @@ static void spark_step(float dt)
 		SP->y[i] += SP->vy[i]*dt;
 		SP->z[i] += SP->vz[i]*dt;
 
-		/* para hamuje wyraźnie szybciej niż iskra */
+		/* steam slows down noticeably faster than a spark */
 		float drag = SP->grow[i] > 0.0f ? 1.0f - 1.9f*dt : 1.0f - 1.4f*dt;
 		SP->vx[i]*=drag; SP->vy[i]*=drag; SP->vz[i]*=drag;
 
@@ -384,8 +384,8 @@ static void micro_burst(float x, float y, float z, const float *col)
 }
 
 /*
- * Wybuch na drugim planie. Im dalej, tym większy i wolniejszy — inaczej
- * czytałby się jako coś, co zaraz na nas spadnie.
+ * An explosion in the background. The farther, the bigger and slower —
+ * otherwise it would read as something about to fall on us.
  */
 static void far_burst(float x, float y, float z, float hue)
 {
@@ -422,7 +422,7 @@ static void far_burst(float x, float y, float z, float hue)
 		          (26.0f + frnd()*34.0f)*scale, 2.2f + frnd()*2.0f);
 }
 
-/* ================= gwiazdy tła i mgławice ======================== */
+/* ================= background stars and nebulae ================== */
 
 static float *BG;          /* N_BG * 7: xyz rgb size */
 
@@ -447,10 +447,10 @@ static void seed_bg(void)
 }
 
 /*
- * Mgławice: wielkie, bardzo ciemne obłoki daleko za akcją, ułożone
- * w kilka skupisk, żeby miały kształt zamiast być równomierną sieczką.
- * Rysowane jako kwady zwrócone do kamery — punkty odpadły, bo mobilne
- * GPU obcinają gl_PointSize do 64-128 px i obłoki znikały.
+ * Nebulae: huge, very dark clouds far behind the action, laid out in
+ * a few clusters so they have a shape instead of an even mush.
+ * Drawn as camera-facing quads — points were dropped because mobile
+ * GPUs clamp gl_PointSize to 64-128 px and the clouds vanished.
  */
 static float *NEB_POS;     /* N_NEB * 3 */
 static float *NEB_COL;     /* N_NEB * 3 */
@@ -480,8 +480,8 @@ static void seed_nebulae(void)
 		NEB_POS[i*3+1] = cl[c].p[1] + gauss()*cl[c].spread;
 		NEB_POS[i*3+2] = cl[c].p[2] + gauss()*cl[c].spread;
 
-		/* rozrzut potrafi wepchnąć obłok w strefę lotów (apocentrum 46);
-		   taki kolos pochłonąłby scenę, więc wypychamy go na zewnątrz */
+		/* the spread can push a puff into the flight zone (apoapsis 46);
+		   such a giant would swallow the scene, so push it outwards */
 		float rr = sqrtf(NEB_POS[i*3+0]*NEB_POS[i*3+0] +
 		                 NEB_POS[i*3+1]*NEB_POS[i*3+1] +
 		                 NEB_POS[i*3+2]*NEB_POS[i*3+2]);
@@ -500,15 +500,15 @@ static void seed_nebulae(void)
 		NEB_COL[i*3+1] = col[1]*b;
 		NEB_COL[i*3+2] = col[2]*b;
 
-		/* Promień w jednostkach świata (billboard, więc bez limitu
-		   pikseli). Wypełnianie rośnie z KWADRATEM tej liczby. */
+		/* Radius in world units (a billboard, so no pixel limit).
+		   Fill cost grows with the SQUARE of this number. */
 		NEB_R[i]    = (8.0f + frnd()*20.0f) * NEB_SIZE;
 		NEB_PH[i]   = frnd()*TAU;
 		NEB_RATE[i] = 0.05f + frnd()*0.16f;
 	}
 }
 
-/* ================= obiekty ======================================= */
+/* ================= objects ======================================= */
 
 struct flyer {
 	float pos[3], vel[3], dir[3];
@@ -517,7 +517,7 @@ struct flyer {
 	float width;
 	int   ribbon;
 
-	/* ślad: barwa zapamiętana w chwili emisji, stąd tęczowy gradient */
+	/* trail: colour stored at emission time, hence the rainbow gradient */
 	float *sx, *sy, *sz, *sa, *scr, *scg, *scb;
 	int   n;
 	float acc;
@@ -526,14 +526,14 @@ struct flyer {
 	float head_glow;
 	float fuse;
 
-	int   group;        /* -1 = solista */
+	int   group;        /* -1 = solo */
 	int   gindex;
-	bool  waiting;      /* czeka na miejsce poza kadrem */
+	bool  waiting;      /* waiting for a spot outside the frame */
 };
 
 struct group {
-	float pos[3], vel[3];        /* prowadzący — niewidoczny */
-	float u[3], v[3];            /* baza prostopadła, przenoszona w czasie */
+	float pos[3], vel[3];        /* leader — invisible */
+	float u[3], v[3];            /* perpendicular basis, carried over time */
 	float radius, omega, phase;
 	float fuse;
 	int   members[3];
@@ -544,14 +544,14 @@ struct group {
 static struct flyer  *FL;
 static struct group  *GR;
 static int  n_flyers = 0, n_groups = 0;
-static float *TRAIL;                 /* wspólny magazyn śladów */
+static float *TRAIL;                 /* shared trail storage */
 
-/* macierz widok-rzut z bieżącej klatki — potrzebna przy wlotach */
+/* view-projection matrix of the current frame — needed for entries */
 static float CUR_VP[16];
 static float CAM_EYE[3] = { 0.0f, 0.0f, 0.0f };
 static bool  vp_ready = false;
 
-/* ---- orbity ----------------------------------------------------- */
+/* ---- orbits ---------------------------------------------------- */
 
 static void init_orbit(float *pos, float *vel, float r0, float k)
 {
@@ -561,7 +561,7 @@ static void init_orbit(float *pos, float *vel, float r0, float k)
 	float t1[3], t2[3];
 	perp_basis(u, t1, t2);
 
-	/* losowa płaszczyzna orbity */
+	/* random orbital plane */
 	float a = frnd() * TAU;
 	float ca = cosf(a), sa = sinf(a);
 	float w[3] = { t1[0]*ca + t2[0]*sa,
@@ -575,17 +575,17 @@ static void init_orbit(float *pos, float *vel, float r0, float k)
 }
 
 /*
- * Orbita wokół obserwatora. Perycentrum nie może być zbyt małe, bo
- * obiekt przeleciałby przez płaszczyznę bliską i zniknął z hukiem.
+ * An orbit around the viewer. Periapsis must not be too small, or the
+ * object would fly through the near plane and vanish with a bang.
  */
 static void random_orbit(float *pos, float *vel)
 {
 	for (int i = 0; i < 40; i++) {
 		float r0 = 7.0f + frnd()*34.0f;
-		float k  = frnd() < 0.45f ? 0.45f + frnd()*0.34f   /* wydłużona */
-		                          : 0.82f + frnd()*0.40f;  /* okrągława */
+		float k  = frnd() < 0.45f ? 0.45f + frnd()*0.34f   /* elongated */
+		                          : 0.82f + frnd()*0.40f;  /* roundish */
 
-		/* dla k<1 punkt startu jest apocentrum, dla k>1 perycentrum */
+		/* for k<1 the start point is apoapsis, for k>1 periapsis */
 		float den = 2.0f - k*k;
 		if (den < 0.12f) den = 0.12f;
 		float other = r0 * (k*k) / den;
@@ -621,7 +621,7 @@ static void grav_step(float *pos, float *vel, float dt, float *moved)
 	}
 }
 
-/* ---- wloty zza kadru -------------------------------------------- */
+/* ---- entering from off-screen ---------------------------------- */
 
 static bool on_screen(const float *p, float margin)
 {
@@ -631,7 +631,7 @@ static bool on_screen(const float *p, float margin)
 	const float *m = CUR_VP;
 	float w = m[3]*p[0] + m[7]*p[1] + m[11]*p[2] + m[15];
 	if (w <= 0.05f)
-		return false;                 /* za kamerą = poza kadrem */
+		return false;                 /* behind the camera = off-screen */
 
 	float x = m[0]*p[0] + m[4]*p[1] + m[8] *p[2] + m[12];
 	float y = m[1]*p[0] + m[5]*p[1] + m[9] *p[2] + m[13];
@@ -639,9 +639,9 @@ static bool on_screen(const float *p, float margin)
 }
 
 /*
- * Obiekt nigdy nie materializuje się w polu widzenia: losujemy orbitę
- * tak długo, aż punkt startu wypadnie poza ekranem. Nie udało się —
- * czeka w ukryciu i próbuje dalej, kamera i tak się przesuwa.
+ * An object never materialises in view: keep drawing orbits until the
+ * start point lands off-screen. If that fails, it waits hidden and
+ * tries again — the camera keeps turning anyway.
  */
 static bool respawn_offscreen(float *pos, float *vel)
 {
@@ -652,14 +652,14 @@ static bool respawn_offscreen(float *pos, float *vel)
 		if (sqrtf(dx*dx + dy*dy + dz*dz) < 12.0f)
 			continue;
 
-		/* margines z zapasem na promień krążenia w układach */
+		/* margin with room for the circling radius in groups */
 		if (!on_screen(pos, 1.22f))
 			return true;
 	}
 	return false;
 }
 
-/* ---- tworzenie -------------------------------------------------- */
+/* ---- creation -------------------------------------------------- */
 
 static void trail_reset(struct flyer *f)
 {
@@ -678,7 +678,7 @@ static int make_flyer(int ribbon, float hue, float hue_rate)
 	struct flyer *f = &FL[idx];
 	memset(f, 0, sizeof(*f));
 
-	/* wycinek wspólnego magazynu: 7 kanałów po MAX_SAMPLES */
+	/* a slice of the shared storage: 7 channels of MAX_SAMPLES */
 	float *base = TRAIL + (size_t)idx * MAX_SAMPLES * 7;
 	f->sx  = base;
 	f->sy  = base + MAX_SAMPLES;
@@ -727,7 +727,7 @@ static void make_group(int count)
 	g->fuse   = 15.0f + frnd()*30.0f;
 	g->count  = count;
 
-	/* barwy członków pokrewne, ale rozróżnialne */
+	/* member colours are related but distinguishable */
 	float h0 = frnd(), spread = 0.16f + frnd()*0.22f;
 	float rate = frnd() < 0.4f ? 0.012f + frnd()*0.030f
 	                           : 0.05f + frnd()*0.13f;
@@ -741,8 +741,8 @@ static void make_group(int count)
 		g->members[i] = id;
 	}
 
-	/* od razu na pozycjach orbitalnych — inaczej pierwszy krok
-	   teleportowałby członków z losowych miejsc */
+	/* straight onto orbital positions — otherwise the first step
+	   would teleport members from random places */
 	float ld[3] = { g->vel[0], g->vel[1], g->vel[2] };
 	vnorm(ld);
 	perp_basis(ld, g->u, g->v);
@@ -758,7 +758,7 @@ static void make_group(int count)
 	n_groups++;
 }
 
-/* ================= krok symulacji ================================ */
+/* ================= simulation step =============================== */
 
 static int active_count(void)
 {
@@ -787,7 +787,7 @@ static void trail_push(struct flyer *f)
 
 static void flyer_tail(struct flyer *f, float t, float dt, float step)
 {
-	/* wędrówka odcienia */
+	/* hue drift */
 	f->hue += f->hue_rate * HUE_MUL * dt;
 	hsv(f->hue, 1.0f, 1.0f, f->col);
 
@@ -810,8 +810,8 @@ static void flyer_tail(struct flyer *f, float t, float dt, float step)
 	float bx = f->pos[0], by = f->pos[1], bz = f->pos[2];
 	static const float white[3] = { 1.0f, 1.0f, 1.0f };
 
-	/* ISKRY — sypią się z samego obiektu, na wszystkie strony i krótko
-	   żyją, więc trzymają się przy nim jak zimne ognie */
+	/* SPARKS — shed from the object itself, in all directions, and short-
+	   lived, so they stay close to it like sparklers */
 	if (f->ribbon == R_SPARK) {
 		f->spark_acc += dt * 70.0f;
 		int n = (int)f->spark_acc;
@@ -830,7 +830,7 @@ static void flyer_tail(struct flyer *f, float t, float dt, float step)
 		}
 	}
 
-	/* koraliki wzdłuż toru */
+	/* beads along the path */
 	if (f->ribbon == R_BEAD) {
 		f->bead_acc += step;
 		if (f->bead_acc > 0.5f) {
@@ -840,7 +840,7 @@ static void flyer_tail(struct flyer *f, float t, float dt, float step)
 		}
 	}
 
-	/* PARA I DYM — wyłącznie z ogona, nie z obiektu */
+	/* STEAM AND SMOKE — only from the tail, never from the object */
 	if (MIST_MUL > 0.0f && f->n > 4) {
 		float rate = (f->ribbon == R_VAPOR ? 26.0f : 9.0f) * MIST_MUL;
 		f->mist_acc += dt * rate;
@@ -859,9 +859,9 @@ static void flyer_tail(struct flyer *f, float t, float dt, float step)
 }
 
 /*
- * Baza prostopadła liczona od zera potrafi skokowo obrócić się o 90
- * stopni, gdy prowadzący zmieni kierunek — członkowie teleportowali się
- * wtedy na drugą stronę. Zamiast tego przenosimy poprzednią bazę.
+ * A perpendicular basis computed from scratch can flip by 90 degrees
+ * when the leader changes direction — members used to teleport to the
+ * other side. Instead, the previous basis is carried over.
  */
 static void carry_basis(struct group *g, const float *ld)
 {
@@ -880,7 +880,7 @@ static void carry_basis(struct group *g, const float *ld)
 
 static void step_all(float t, float dt)
 {
-	/* soliści */
+	/* solos */
 	for (int i = 0; i < n_flyers; i++) {
 		struct flyer *f = &FL[i];
 		if (f->group >= 0 || sleeping(i))
@@ -915,7 +915,7 @@ static void step_all(float t, float dt)
 		}
 	}
 
-	/* układy: prowadzący steruje, członkowie krążą po śrubie */
+	/* groups: the leader steers, members circle it on a helix */
 	for (int gi = 0; gi < n_groups; gi++) {
 		struct group *g = &GR[gi];
 		if (g->count == 0 || sleeping(g->members[0]))
@@ -982,7 +982,7 @@ static void step_all(float t, float dt)
 	}
 }
 
-/* ================= shadery ======================================= */
+/* ================= shaders ======================================= */
 
 static const char *VS_RIB =
 "attribute vec3 aPos; attribute vec3 aCol; attribute vec3 aOff;\n"
@@ -1002,7 +1002,7 @@ static const char *FS_RIB =
 "void main(){\n"
 "  float s2=vSide*vSide;\n"
 "  float a=exp(-s2*uSoft);\n"
-/* wąska oś wstęgi jest gorętsza od brzegów — jak rozgrzany metal */
+/* the narrow axis of a ribbon is hotter than its edges — like glowing metal */
 "  float core=exp(-s2*uSoft*7.0);\n"
 "  float lum=max(max(vCol.r,vCol.g),vCol.b);\n"
 "  gl_FragColor=vec4(vCol*a + vec3(lum)*core*uHeat, 1.0);\n"
@@ -1039,7 +1039,7 @@ static const char *FS_MIST =
 "  gl_FragColor=vec4(vCol*exp(-r2*7.0)*0.5,1.0);\n"
 "}\n";
 
-/* mgławice jako kwady zwrócone do kamery */
+/* nebulae as camera-facing quads */
 static const char *VS_NEB =
 "attribute vec3 aPos; attribute vec3 aCol; attribute vec2 aUV;\n"
 "uniform mat4 uMVP;\n"
@@ -1089,7 +1089,7 @@ static const char *FS_PRES =
 "uniform vec2 uRes;\n"
 "void main(){\n"
 "  vec3 c=texture2D(uScene,vUV).rgb;\n"
-/* szeroka aureola z rozsunięciem kanałów — tęczowa obwódka */
+/* wide halo with channel split — the rainbow fringe */
 "  vec2 d=(vUV-0.5)*uFringe;\n"
 "  vec3 wide=vec3(texture2D(uB8,vUV+d).r,\n"
 "                 texture2D(uB8,vUV).g,\n"
@@ -1098,13 +1098,13 @@ static const char *FS_PRES =
 "  c*=uExposure*uFade;\n"
 "  c=c/(1.0+c*0.30);\n"
 "  c=pow(c,vec3(0.4545));\n"
-/* rozproszenie błędu kwantyzacji — bez tego mgławice pasmują */
+/* dithers quantisation error — without it nebulae band */
 "  float n=fract(sin(dot(vUV*uRes,vec2(12.9898,78.233)))*43758.5453);\n"
 "  c+=(n-0.5)*(1.0/255.0);\n"
 "  gl_FragColor=vec4(c,1.0);\n"
 "}\n";
 
-/* ================= zasoby GL ===================================== */
+/* ================= GL resources ================================== */
 
 static GLuint compile_shader(GLenum type, const char *src)
 {
@@ -1164,18 +1164,18 @@ static struct {
 
 static GLuint vbo_rib, vbo_pts, vbo_mist, vbo_neb, vbo_quad;
 
-/* bufory po stronie procesora */
+/* CPU-side buffers */
 #define RIB_STRIDE 10
 static float *RIB;   int rib_v = 0;
-static int    n_range = 0;   /* liczba wstęg w taśmie */
+static int    n_range = 0;   /* number of ribbons in the strip */
 static float *PTS;   int pts_n = 0;
 static float *MST;   int mst_n = 0;
 static float *NEBV;  int neb_v = 0;
 
-/* cel renderowania i łańcuch poświaty */
+/* render target and glow chain */
 static GLuint tex_scene = 0, fbo_scene = 0;
 static GLuint t4a=0,t4b=0,t8a=0,t8b=0, f4a=0,f4b=0,f8a=0,f8b=0;
-static GLuint tex_neb=0, fbo_neb=0;   /* mgławice w obniżonej rozdzielczości */
+static GLuint tex_neb=0, fbo_neb=0;   /* nebulae at reduced resolution */
 static int rt_w = 0, rt_h = 0, b4w=0,b4h=0,b8w=0,b8h=0;
 
 static GLenum TEX_TYPE = GL_UNSIGNED_BYTE;
@@ -1183,7 +1183,7 @@ static GLint  TEX_FILTER = GL_LINEAR;
 static bool   HDR = false;
 static float  EXPOSURE = 1.0f;
 
-/* ---- tekstury i łańcuch poświaty -------------------------------- */
+/* ---- textures and the glow chain ------------------------------- */
 
 static GLuint mk_tex(int w, int h)
 {
@@ -1210,9 +1210,9 @@ static GLuint mk_fbo(GLuint t)
 }
 
 /*
- * Bufor 8-bitowy ścina addytywne sumowanie na 1.0 — rozżarzony rdzeń
- * wstęgi i zwykła poświata lądują w tej samej bieli. Half-float
- * zachowuje prawdziwe wartości, więc poświata ma co odróżniać.
+ * An 8-bit buffer clips additive blending at 1.0 — a white-hot ribbon
+ * core and ordinary glow end up as the same white. Half-float keeps
+ * the real values, so the glow has something to tell apart.
  */
 static void probe_hdr(void)
 {
@@ -1241,18 +1241,18 @@ static void probe_hdr(void)
 	if (ok) {
 		TEX_TYPE = GL_HALF_FLOAT_OES;
 		HDR = true;
-		/* filtrowanie liniowe half-floatów bywa nieobsługiwane */
+		/* linear filtering of half-floats is sometimes unsupported */
 		TEX_FILTER = strstr(ext, "GL_OES_texture_half_float_linear")
 		           ? GL_LINEAR : GL_NEAREST;
-		/* bez ścinania scena wychodzi jaśniejsza */
+		/* without clipping the scene comes out brighter */
 		EXPOSURE = 0.55f;
 	}
 }
 
 /*
- * Każdy rozmiar ekranu ma własny komplet buforów. Przy monitorach
- * o różnych rozdzielczościach wcześniej przealokowywaliśmy wszystko
- * przy każdej klatce każdego wyjścia; teraz tylko przełączamy komplet.
+ * Every screen size has its own set of buffers. With monitors of
+ * different resolutions everything used to be reallocated on every
+ * frame of every output; now we just switch sets.
  */
 struct targets {
 	int w, h;
@@ -1283,7 +1283,7 @@ static void make_targets(int w, int h)
 			r = &RT[i];
 
 	if (!r) {
-		if (n_rt == MAX_TARGETS) {   /* nie powinno się zdarzyć */
+		if (n_rt == MAX_TARGETS) {   /* should not happen */
 			targets_free(&RT[0]);
 			memmove(RT, RT + 1, sizeof(RT[0]) * (MAX_TARGETS - 1));
 			n_rt--;
@@ -1301,8 +1301,8 @@ static void make_targets(int w, int h)
 		if (r->b8w < 1) r->b8w = 1;
 		if (r->b8h < 1) r->b8h = 1;
 
-		/* Mgławice to najbardziej rozmyte rzeczy w scenie — ćwiartka boku
-		   niczego nie psuje, a ścina wypełnianie szesnastokrotnie. */
+		/* Nebulae are the blurriest thing in the scene — a quarter of the side
+		   spoils nothing and cuts fill sixteen times. */
 		r->tex_neb = mk_tex(r->b4w, r->b4h);
 		r->fbo_neb = mk_fbo(r->tex_neb);
 
@@ -1320,13 +1320,13 @@ static void make_targets(int w, int h)
 	rt_w = w; rt_h = h;
 }
 
-/* ---- budowa buforów --------------------------------------------- */
+/* ---- building buffers ------------------------------------------ */
 
 /*
- * Wszystkie wstęgi w JEDNEJ taśmie. Między obiektami wstawiamy
- * zdegenerowane trójkąty (powtórzony ostatni i pierwszy wierzchołek),
- * które mają zerową powierzchnię i nic nie rysują. Dzięki temu zamiast
- * 190 wywołań rysowania na przebieg mamy jedno.
+ * All ribbons in ONE strip. Between objects we insert degenerate
+ * triangles (the last and the first vertex repeated), which have zero
+ * area and draw nothing. That way we have one draw call per pass
+ * instead of 190.
  */
 static void build_ribbons(const float *eye)
 {
@@ -1363,8 +1363,8 @@ static void build_ribbons(const float *eye)
 			float age = f->sa[i] / TRAIL_LIFE;
 			float fade = 1.0f - age;
 			if (fade < 0.0f) fade = 0.0f;
-			fade = fade*fade*fade;                 /* stromy zanik */
-			float spread = 1.0f + age*age*3.2f;    /* rozdęcie w mgłę */
+			fade = fade*fade*fade;                 /* steep falloff */
+			float spread = 1.0f + age*age*3.2f;    /* swelling into mist */
 			float headness = (float)i / (float)(f->n - 1);
 			float hw = f->width * (0.22f + 0.78f*headness) * spread;
 
@@ -1385,14 +1385,14 @@ static void build_ribbons(const float *eye)
 			}
 		}
 
-		if (rib_v - start < 4) {          /* za krótka, zwijamy */
+		if (rib_v - start < 4) {          /* too short, skip */
 			rib_v = start;
 			continue;
 		}
 
-		/* Łącznik: powielamy ostatni wierzchołek poprzedniej wstęgi
-		   ORAZ pierwszy tej. Dwa powtórzenia są konieczne — przy
-		   jednym powstaje realny trójkąt spinający obie wstęgi. */
+		/* Joint: repeat the last vertex of the previous ribbon AND the first
+		   one of this ribbon. Both repeats are needed — with just one, a real
+		   triangle appears that bridges the two ribbons. */
 		if (n_range > 0) {
 			memmove(RIB + (size_t)(start+2)*RIB_STRIDE,
 			        RIB + (size_t)start*RIB_STRIDE,
@@ -1434,7 +1434,7 @@ static void build_points(void)
 		}
 	}
 
-	/* jasne główki */
+	/* bright heads */
 	for (int fi = 0; fi < n_flyers; fi++) {
 		struct flyer *f = &FL[fi];
 		if (f->waiting || sleeping(fi))
@@ -1458,13 +1458,13 @@ static void build_points(void)
 	}
 }
 
-static float VP[16];   /* widok-rzut bieżącej klatki */
+static float VP[16];   /* view-projection of the current frame */
 
-/* Szacunek wypełniania: ile pełnych ekranów pokrywają obłoki razem.
-   Liczone, a nie zgadywane — to najdroższa rzecz w scenie. */
+/* Fill estimate: how many full screens the puffs cover together.
+   Counted, not guessed — it is the most expensive thing in the scene. */
 static float neb_overdraw = 0.0f;
 
-/* kwady mgławic rozpięte na wektorach prawo/góra z macierzy widoku */
+/* nebula quads spanned on the right/up vectors of the view matrix */
 static void build_nebulae(const float *view, const float *eye,
                           float focal, float aspect, float t)
 {
@@ -1482,8 +1482,8 @@ static void build_nebulae(const float *view, const float *eye,
 		float s = NEB_R[i];
 
 		{
-			/* Rzutujemy środek: obłoki za plecami i poza kadrem nic
-			   nie kosztują, więc nie wolno ich wliczać. */
+			/* Project the centre: puffs behind us and off-screen cost
+			   nothing, so they must not be counted. */
 			const float *m = VP;
 			float cx = NEB_POS[i*3], cy = NEB_POS[i*3+1], cz = NEB_POS[i*3+2];
 			float w = m[3]*cx + m[7]*cy + m[11]*cz + m[15];
@@ -1496,7 +1496,7 @@ static void build_nebulae(const float *view, const float *eye,
 				if (dist > 0.5f) {
 					float ry = s*focal/dist;
 					float rx = ry/aspect;
-					/* poza kadrem? */
+					/* off-screen? */
 					if (fabsf(nx)-rx < 1.0f && fabsf(ny)-ry < 1.0f) {
 						float a = 3.14159f*rx*ry/4.0f;
 						neb_overdraw += a > 1.0f ? 1.0f : a;
@@ -1520,7 +1520,7 @@ static void build_nebulae(const float *view, const float *eye,
 	}
 }
 
-/* ---- rysowanie -------------------------------------------------- */
+/* ---- drawing --------------------------------------------------- */
 
 static void draw_quad(void)
 {
@@ -1599,7 +1599,7 @@ static void run_bloom(void)
 	glActiveTexture(GL_TEXTURE0);
 	glBindTexture(GL_TEXTURE_2D, tex_scene);
 	glUniform1i(P.b_src, 0);
-	/* w HDR próg leży powyżej bieli — świeci tylko to, co gorące */
+	/* in HDR the threshold is above white — only what is hot glows */
 	glUniform1f(P.b_thresh, HDR ? 0.75f : 0.085f);
 	glUniform1f(P.b_scale,  HDR ? 0.85f : 1.30f);
 	draw_quad();
@@ -1616,14 +1616,14 @@ static void run_bloom(void)
 	blur_into(f8b, t8a, b8w, b8h, 0.0f, 2.0f/(float)b8h);
 }
 
-/* ================= interfejs ===================================== */
+/* ================= interface ===================================== */
 
 static bool ready = false;
 static double last_t = -1.0;
 
 /*
- * Miernik klatek. NEBULIGHTS_STATS=1 wypisuje co 5 s czas klatki i to, co go
- * tworzy. Bez tego strojenie wydajności to zgadywanie.
+ * Frame meter. NEBULIGHTS_STATS=1 prints the frame time and what it is
+ * made of every 5 s. Without it, performance tuning is guesswork.
  */
 static bool  stats_on = false;
 static double stats_t0 = 0.0;
@@ -1728,7 +1728,7 @@ void scene_init(void)
 	NEB_R   = calloc(N_NEB_MAX, sizeof(float));
 	NEB_PH  = calloc(N_NEB_MAX, sizeof(float));
 	NEB_RATE= calloc(N_NEB_MAX, sizeof(float));
-	/* +2 wierzchołki na wstęgę: zdegenerowane łączniki */
+	/* +2 vertices per ribbon: degenerate joints */
 	RIB     = calloc((size_t)MAX_FLYERS*(MAX_SAMPLES*2+2)*RIB_STRIDE, sizeof(float));
 	PTS     = calloc((size_t)(N_BG_MAX+MAX_SPARK+MAX_FLYERS)*7, sizeof(float));
 	MST     = calloc((size_t)MAX_SPARK*7, sizeof(float));
@@ -1745,7 +1745,7 @@ void scene_init(void)
 
 void scene_fini(void)
 {
-	/* kontekst i tak znika razem z powierzchnią */
+	/* the context goes away with the surface anyway */
 	ready = false;
 }
 
@@ -1768,8 +1768,8 @@ void scene_draw(int width, int height, double t, float fade)
 	last_t = t;
 	if (dt > 0.05f) dt = 0.05f;
 
-	/* Kamera stoi w środku i tylko obraca spojrzenie — gdyby się
-	   przemieszczała, atraktor jechałby razem z nią. */
+	/* The camera stays at the centre and only turns its gaze — if it
+	   moved, the attractor would move along with it. */
 	float ft = (float)t;
 	float camR = 3.2f + 1.4f*sinf(ft*0.013f);
 	float camA = ft*0.041f;
@@ -1830,7 +1830,7 @@ void scene_draw(int width, int height, double t, float fade)
 
 	double t_cpu1 = stats_on ? now_ms() : 0.0;
 
-	/* --- mgławice do własnego bufora, w obniżonej rozdzielczości --- */
+	/* --- nebulae into their own buffer, at reduced resolution --- */
 	if (neb_v > 0) {
 		glBindFramebuffer(GL_FRAMEBUFFER, fbo_neb);
 		glViewport(0, 0, b4w, b4h);
@@ -1853,7 +1853,7 @@ void scene_draw(int width, int height, double t, float fade)
 		for (int i = 0; i < 3; i++) glDisableVertexAttribArray((GLuint)i);
 	}
 
-	/* --- scena --- */
+	/* --- scene --- */
 	glBindFramebuffer(GL_FRAMEBUFFER, fbo_scene);
 	glViewport(0, 0, width, height);
 	glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
@@ -1862,9 +1862,9 @@ void scene_draw(int width, int height, double t, float fade)
 	glEnable(GL_BLEND);
 	glBlendFunc(GL_ONE, GL_ONE);
 
-	/* mgławice wjeżdżają gotowe z osobnego, mniejszego bufora */
+	/* nebulae come in ready-made from a separate, smaller buffer */
 	if (neb_v > 0) {
-		glUseProgram(P.bright);          /* próg 0, skala 1 = przepisanie */
+		glUseProgram(P.bright);          /* threshold 0, scale 1 = plain copy */
 		glActiveTexture(GL_TEXTURE0);
 		glBindTexture(GL_TEXTURE_2D, tex_neb);
 		glUniform1i(P.b_src, 0);
@@ -1875,16 +1875,16 @@ void scene_draw(int width, int height, double t, float fade)
 
 	draw_points(P.mist, P.m_mvp, P.m_scale, vbo_mist, MST, mst_n, height);
 
-	/* wstęgi: geometria budowana raz, rysowana dwa razy */
+	/* ribbons: geometry built once, drawn twice */
 	glBindBuffer(GL_ARRAY_BUFFER, vbo_rib);
 	glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)rib_v*RIB_STRIDE*sizeof(float),
 	             RIB, GL_STREAM_DRAW);
-	draw_ribbons(1.6f, 2.6f, 0.26f, 0.0f);   /* szeroka poświata */
-	draw_ribbons(7.0f, 1.0f, 1.00f, 0.9f);   /* rdzeń, rozżarzony */
+	draw_ribbons(1.6f, 2.6f, 0.26f, 0.0f);   /* wide glow */
+	draw_ribbons(7.0f, 1.0f, 1.00f, 0.9f);   /* white-hot core */
 
 	draw_points(P.pts, P.p_mvp, P.p_scale, vbo_pts, PTS, pts_n, height);
 
-	/* --- poświata i złożenie --- */
+	/* --- glow and composite --- */
 	run_bloom();
 
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -1917,9 +1917,9 @@ void scene_draw(int width, int height, double t, float fade)
 
 		if (stats_t0 == 0.0) stats_t0 = t_end;
 
-		/* Wygaszenie monitorów albo blokada ekranu zatrzymuje zgody na
-		   klatki. Okno pomiarowe rozciąga się wtedy na kilka sekund
-		   i wypisałoby bzdurne 0.3 fps — zaczynamy liczyć od nowa. */
+		/* Blanked monitors or a screen lock stop frame callbacks. The
+		   measuring window then stretches over several seconds and would
+		   print a bogus 0.3 fps — start counting again. */
 		if (frame_gap > 500.0) {
 			stats_t0 = t_end;
 			stats_frames = 0;

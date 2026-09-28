@@ -1,8 +1,8 @@
 /*
- * nebulights — wygaszacz ekranu dla kompozytorów Wayland (wlroots).
+ * nebulights — a screensaver for Wayland compositors (wlroots).
  *
- * Rysuje pełnoekranową nakładkę na warstwie "overlay" po wykryciu
- * bezczynności (ext-idle-notify-v1) i znika przy pierwszej aktywności.
+ * Draws a fullscreen overlay on the "overlay" layer once idle is
+ * detected (ext-idle-notify-v1) and disappears on the first activity.
  */
 
 #define _POSIX_C_SOURCE 200809L
@@ -42,7 +42,7 @@ struct output {
 	struct wl_output *wl_output;
 	uint32_t global_name;
 
-	/* żywe tylko gdy wygaszacz jest aktywny */
+	/* alive only while the screensaver is active */
 	struct wl_surface *surface;
 	struct zwlr_layer_surface_v1 *layer;
 	struct wl_egl_window *egl_window;
@@ -52,7 +52,7 @@ struct output {
 	int32_t width, height;
 	bool configured;
 
-	/* fps_cap: klatka odłożona do next_ms, bo zgoda przyszła za wcześnie */
+	/* fps_cap: frame postponed until next_ms, the callback came too early */
 	double next_ms;
 	bool due;
 };
@@ -74,7 +74,7 @@ struct app {
 	struct wl_list outputs;
 
 	bool active;
-	bool pending;      /* bezczynność nadeszła, ale coś ją blokuje */
+	bool pending;      /* idle arrived, but something inhibits it */
 	bool running;
 	int timeout_sec;
 	bool oneshot;
@@ -83,7 +83,7 @@ struct app {
 
 static struct app state = {0};
 
-/* Czy respektować blokady zgłaszane przez D-Bus (--ignore-inhibit wyłącza). */
+/* Whether to honour inhibitors reported over D-Bus (--ignore-inhibit disables). */
 static bool respect_inhibit = true;
 
 /* ------------------------------------------------------------------ */
@@ -109,7 +109,7 @@ static void die(const char *msg)
 }
 
 /* ------------------------------------------------------------------ */
-/* renderowanie                                                        */
+/* rendering                                                           */
 
 static void output_render(struct output *o);
 
@@ -121,8 +121,8 @@ static void frame_done(void *data, struct wl_callback *cb, uint32_t time)
 	o->frame = NULL;
 	if (!o->v->active)
 		return;
-	/* Każde wyjście ma własne tempo: przy fps_cap zgodę, która przyszła
-	   przed czasem, odkładamy, a pętla główna dorysuje klatkę później. */
+	/* Every output keeps its own pace: with fps_cap, a frame callback that
+	   arrives early is postponed and the main loop draws the frame later. */
 	if (scene_fps_cap() > 0 && now_ms() + 1.0 < o->next_ms)
 		o->due = true;
 	else
@@ -219,7 +219,7 @@ static const struct zwlr_layer_surface_v1_listener layer_listener = {
 };
 
 /* ------------------------------------------------------------------ */
-/* aktywacja / dezaktywacja                                            */
+/* activation / deactivation                                           */
 
 static void output_teardown(struct output *o)
 {
@@ -322,8 +322,8 @@ static void idle_idled(void *data, struct ext_idle_notification_v1 *n)
 	(void)n;
 
 	if (respect_inhibit && inhibit_active()) {
-		/* Film albo gra. Nie wchodzimy, ale zostajemy w gotowości —
-		   sprawdzamy co kilka sekund, aż blokada zniknie. */
+		/* A video or a game. Don't start, but stay ready —
+		   check every few seconds until the inhibitor goes away. */
 		v->pending = true;
 		fprintf(stderr, "nebulights: idle, but something inhibits "
 		        "the screensaver, waiting\n");
@@ -346,7 +346,7 @@ static const struct ext_idle_notification_v1_listener idle_listener = {
 };
 
 /* ------------------------------------------------------------------ */
-/* klawiatura — natychmiastowe wyjście                                 */
+/* keyboard — exit immediately                                         */
 
 static void kbd_keymap(void *d, struct wl_keyboard *k, uint32_t fmt,
                        int32_t fd, uint32_t size)
@@ -560,7 +560,7 @@ int main(int argc, char **argv)
 	v->registry = wl_display_get_registry(v->display);
 	wl_registry_add_listener(v->registry, &registry_listener, v);
 	wl_display_roundtrip(v->display);
-	wl_display_roundtrip(v->display);   /* dla zdarzeń seat/output */
+	wl_display_roundtrip(v->display);   /* for seat/output events */
 
 	if (!v->compositor)
 		die("compositor does not provide wl_compositor");
@@ -595,8 +595,8 @@ int main(int argc, char **argv)
 			.fd = wl_display_get_fd(v->display),
 			.events = POLLIN,
 		};
-		/* Odłożona aktywacja i praca wymagają okresowego zaglądania,
-		   czy blokada się nie pojawiła albo nie zniknęła. */
+		/* Postponed activation and the running screensaver need periodic checks
+		   whether an inhibitor has appeared or gone away. */
 		int wait_ms = (respect_inhibit && (v->pending || v->active))
 		            ? 3000 : -1;
 		struct output *o;

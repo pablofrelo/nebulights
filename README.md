@@ -172,10 +172,6 @@ eighth for the wide halo with channel split.
 `test/glstub.c` stubs GLES2 and reads the whole declared range of every
 buffer, so `-fsanitize=address` catches overruns.
 
-## Known limitations
-
-- Code comments are in Polish.
-
 ## About the code
 
 nebulights was written by an AI (Claude, by Anthropic) under my

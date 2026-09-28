@@ -1,23 +1,23 @@
 #ifndef NEBULIGHTS_SCENE_H
 #define NEBULIGHTS_SCENE_H
 
-/* Inicjalizacja zasobów GL. Wymaga aktywnego kontekstu. */
+/* Initialise GL resources. Needs a current context. */
 void scene_init(void);
 
-/* Zwolnienie zasobów GL. */
+/* Release GL resources. */
 void scene_fini(void);
 
-/* Reset zegara symulacji (po ponownej aktywacji wygaszacza). */
+/* Reset the simulation clock (when the screensaver activates again). */
 void scene_reset_clock(void);
 
 /*
- * Krok symulacji + narysowanie klatki.
- *   t    — czas bezwzględny w sekundach od aktywacji
- *   fade — mnożnik jasności 0..1 (płynne wejście)
+ * Simulation step + draw a frame.
+ *   t    — absolute time in seconds since activation
+ *   fade — brightness multiplier 0..1 (smooth fade-in)
  */
 void scene_draw(int width, int height, double t, float fade);
 
-/* Limit klatek na wyjście z konfiguracji; 0 = bez limitu. */
+/* Per-output frame cap from the config; 0 = uncapped. */
 int scene_fps_cap(void);
 
 #endif
