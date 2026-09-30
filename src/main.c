@@ -209,6 +209,8 @@ static void layer_configure(void *data, struct zwlr_layer_surface_v1 *layer,
 }
 
 static void deactivate(struct app *v);
+static void egl_setup(struct app *v);
+static void egl_release(struct app *v);
 
 static void layer_closed(void *data, struct zwlr_layer_surface_v1 *layer)
 {
@@ -283,6 +285,11 @@ static void activate(struct app *v)
 	if (v->active)
 		return;
 
+	/* The GPU context exists only while the screensaver runs — idle
+	   waiting should not hold the driver and the render targets. */
+	if (v->egl_context == EGL_NO_CONTEXT)
+		egl_setup(v);
+
 	v->active = true;
 	clock_gettime(CLOCK_MONOTONIC, &v->activated_at);
 	scene_reset_clock();
@@ -310,6 +317,7 @@ static void deactivate(struct app *v)
 	struct output *o;
 	wl_list_for_each(o, &v->outputs, link)
 		output_teardown(o);
+	egl_release(v);
 
 	wl_display_flush(v->display);
 
@@ -502,6 +510,21 @@ static void egl_setup(struct app *v)
 		die("failed to create EGL context");
 }
 
+static void egl_release(struct app *v)
+{
+	if (v->egl_context != EGL_NO_CONTEXT) {
+		eglMakeCurrent(v->egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE,
+		               EGL_NO_CONTEXT);
+		eglDestroyContext(v->egl_display, v->egl_context);
+		v->egl_context = EGL_NO_CONTEXT;
+		scene_fini();
+	}
+	if (v->egl_display != EGL_NO_DISPLAY) {
+		eglTerminate(v->egl_display);
+		v->egl_display = EGL_NO_DISPLAY;
+	}
+}
+
 /* ------------------------------------------------------------------ */
 
 static void on_signal(int sig)
@@ -573,8 +596,6 @@ int main(int argc, char **argv)
 	if (wl_list_empty(&v->outputs))
 		die("no outputs found");
 
-	egl_setup(v);
-
 	if (v->oneshot) {
 		activate(v);
 	} else {
@@ -589,6 +610,8 @@ int main(int argc, char **argv)
 		ext_idle_notification_v1_add_listener(v->idle_notification,
 		                                      &idle_listener, v);
 	}
+
+	double inhibit_checked = now_ms();
 
 	while (v->running) {
 		while (wl_display_prepare_read(v->display) != 0)
@@ -631,7 +654,11 @@ int main(int argc, char **argv)
 			if (o->due && v->active && now_ms() + 1.0 >= o->next_ms)
 				output_render(o);
 
-		if (respect_inhibit && rc == 0) {
+		/* Not on every poll timeout: with fps_cap that is every frame,
+		   and each check is a D-Bus round trip. */
+		if (respect_inhibit && (v->pending || v->active) &&
+		    now_ms() - inhibit_checked >= 3000.0) {
+			inhibit_checked = now_ms();
 			bool blocked = inhibit_active();
 			if (v->pending && !blocked) {
 				fprintf(stderr, "nebulights: inhibitor gone\n");
@@ -646,10 +673,7 @@ int main(int argc, char **argv)
 	}
 
 	deactivate(v);
-	if (v->egl_context != EGL_NO_CONTEXT)
-		eglDestroyContext(v->egl_display, v->egl_context);
-	if (v->egl_display != EGL_NO_DISPLAY)
-		eglTerminate(v->egl_display);
+	egl_release(v);
 	inhibit_fini();
 	wl_display_disconnect(v->display);
 

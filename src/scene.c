@@ -1162,7 +1162,7 @@ static struct {
 	GLint z_has4, z_has8;
 } P;
 
-static GLuint vbo_rib, vbo_pts, vbo_mist, vbo_neb, vbo_quad;
+static GLuint vbo_rib, vbo_pts, vbo_mist, vbo_neb, vbo_quad, vbo_bg;
 
 /* CPU-side buffers */
 #define RIB_STRIDE 10
@@ -1411,8 +1411,7 @@ static void build_ribbons(const float *eye)
 
 static void build_points(void)
 {
-	memcpy(PTS, BG, (size_t)N_BG*7*sizeof(float));
-	pts_n = N_BG;
+	pts_n = 0;
 	mst_n = 0;
 
 	for (int i = 0; i < SP->n; i++) {
@@ -1532,7 +1531,7 @@ static void draw_quad(void)
 }
 
 static void draw_points(GLuint prog, GLint u_mvp, GLint u_scale,
-                        GLuint vbo, const float *buf, int n, int h)
+                        GLuint vbo, int n, int h)
 {
 	if (n <= 0) return;
 	glUseProgram(prog);
@@ -1540,8 +1539,6 @@ static void draw_points(GLuint prog, GLint u_mvp, GLint u_scale,
 	glUniform1f(u_scale, (float)h * 0.0042f);
 
 	glBindBuffer(GL_ARRAY_BUFFER, vbo);
-	glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)n*7*sizeof(float),
-	             buf, GL_STREAM_DRAW);
 	for (int i = 0; i < 3; i++) glEnableVertexAttribArray((GLuint)i);
 	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 28, (void *)0);
 	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 28, (void *)12);
@@ -1618,8 +1615,8 @@ static void run_bloom(void)
 
 /* ================= interface ===================================== */
 
-static bool ready = false;
-static double last_t = -1.0;
+static bool ready = false;    /* GL objects exist in the current context */
+static double last_t = -1.0;  /* time of the last simulation step */
 
 /*
  * Frame meter. NEBULIGHTS_STATS=1 prints the frame time and what it is
@@ -1655,6 +1652,35 @@ static void build_world(void)
 	for (int i = 0; i < SCALED(12); i++) make_flyer(R_BEAD,   -1.0f, 0.0f);
 	for (int i = 0; i < SCALED(12); i++) make_flyer(R_TUBE,   -1.0f, 0.0f);
 #undef SCALED
+}
+
+/* CPU buffers live for the whole process, the world is rebuilt per activation */
+static void alloc_buffers(void)
+{
+	if (SP)
+		return;
+
+	SP      = calloc(1, sizeof(*SP));
+	FL      = calloc(MAX_FLYERS, sizeof(*FL));
+	GR      = calloc(MAX_GROUPS, sizeof(*GR));
+	TRAIL   = calloc((size_t)MAX_FLYERS*MAX_SAMPLES*7, sizeof(float));
+	BG      = calloc((size_t)N_BG_MAX*7, sizeof(float));
+	NEB_POS = calloc((size_t)N_NEB_MAX*3, sizeof(float));
+	NEB_COL = calloc((size_t)N_NEB_MAX*3, sizeof(float));
+	NEB_R   = calloc(N_NEB_MAX, sizeof(float));
+	NEB_PH  = calloc(N_NEB_MAX, sizeof(float));
+	NEB_RATE= calloc(N_NEB_MAX, sizeof(float));
+	/* +2 vertices per ribbon: degenerate joints */
+	RIB     = calloc((size_t)MAX_FLYERS*(MAX_SAMPLES*2+2)*RIB_STRIDE, sizeof(float));
+	PTS     = calloc((size_t)(MAX_SPARK+MAX_FLYERS)*7, sizeof(float));
+	MST     = calloc((size_t)MAX_SPARK*7, sizeof(float));
+	NEBV    = calloc((size_t)N_NEB_MAX*6*8, sizeof(float));
+
+	if (!SP || !FL || !GR || !TRAIL || !BG || !NEB_POS || !NEB_COL ||
+	    !NEB_R || !NEB_PH || !NEB_RATE || !RIB || !PTS || !MST || !NEBV) {
+		fprintf(stderr, "nebulights: out of memory\n");
+		exit(1);
+	}
 }
 
 void scene_init(void)
@@ -1712,41 +1738,29 @@ void scene_init(void)
 
 	glGenBuffers(1,&vbo_rib);  glGenBuffers(1,&vbo_pts);
 	glGenBuffers(1,&vbo_mist); glGenBuffers(1,&vbo_neb);
-	glGenBuffers(1,&vbo_quad);
+	glGenBuffers(1,&vbo_quad); glGenBuffers(1,&vbo_bg);
 
 	static const GLfloat quad[] = { -1,-1, 3,-1, -1,3 };
 	glBindBuffer(GL_ARRAY_BUFFER, vbo_quad);
 	glBufferData(GL_ARRAY_BUFFER, sizeof(quad), quad, GL_STATIC_DRAW);
 
-	SP      = calloc(1, sizeof(*SP));
-	FL      = calloc(MAX_FLYERS, sizeof(*FL));
-	GR      = calloc(MAX_GROUPS, sizeof(*GR));
-	TRAIL   = calloc((size_t)MAX_FLYERS*MAX_SAMPLES*7, sizeof(float));
-	BG      = calloc((size_t)N_BG_MAX*7, sizeof(float));
-	NEB_POS = calloc((size_t)N_NEB_MAX*3, sizeof(float));
-	NEB_COL = calloc((size_t)N_NEB_MAX*3, sizeof(float));
-	NEB_R   = calloc(N_NEB_MAX, sizeof(float));
-	NEB_PH  = calloc(N_NEB_MAX, sizeof(float));
-	NEB_RATE= calloc(N_NEB_MAX, sizeof(float));
-	/* +2 vertices per ribbon: degenerate joints */
-	RIB     = calloc((size_t)MAX_FLYERS*(MAX_SAMPLES*2+2)*RIB_STRIDE, sizeof(float));
-	PTS     = calloc((size_t)(N_BG_MAX+MAX_SPARK+MAX_FLYERS)*7, sizeof(float));
-	MST     = calloc((size_t)MAX_SPARK*7, sizeof(float));
-	NEBV    = calloc((size_t)N_NEB_MAX*6*8, sizeof(float));
-
-	if (!SP || !FL || !GR || !TRAIL || !RIB || !PTS || !MST || !NEBV) {
-		fprintf(stderr, "nebulights: out of memory\n");
-		exit(1);
-	}
-
+	alloc_buffers();
 	build_world();
+
+	/* stars never move — upload once */
+	glBindBuffer(GL_ARRAY_BUFFER, vbo_bg);
+	glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)N_BG*7*sizeof(float),
+	             BG, GL_STATIC_DRAW);
+
 	ready = true;
 }
 
 void scene_fini(void)
 {
-	/* the context goes away with the surface anyway */
+	/* GL objects die with the context; just forget their names */
 	ready = false;
+	n_rt = 0;
+	rt_w = rt_h = 0;
 }
 
 void scene_reset_clock(void)
@@ -1764,8 +1778,13 @@ void scene_draw(int width, int height, double t, float fade)
 	scene_init();
 	make_targets(width, height);
 
-	float dt = (last_t < 0.0) ? 0.0f : (float)(t - last_t);
-	last_t = t;
+	/* All outputs share one context and one world. Outputs drawn within
+	   a few ms of each other reuse the step and the uploaded buffers
+	   instead of simulating and uploading once per monitor. */
+	bool step = last_t < 0.0 || t < last_t || t - last_t >= 0.004;
+	float dt = (last_t < 0.0 || !step) ? 0.0f : (float)(t - last_t);
+	if (step)
+		last_t = t;
 	if (dt > 0.05f) dt = 0.05f;
 
 	/* The camera stays at the centre and only turns its gaze — if it
@@ -1824,9 +1843,24 @@ void scene_draw(int width, int height, double t, float fade)
 	double frame_gap = (stats_on && prev_frame_end > 0.0)
 	                 ? t_cpu0 - prev_frame_end : 0.0;
 
-	build_points();
-	build_ribbons(eye);
-	build_nebulae(view, eye, proj[5], (float)width/(float)(height>0?height:1), ft);
+	if (step) {
+		build_points();
+		build_ribbons(eye);
+		build_nebulae(view, eye, proj[5], (float)width/(float)(height>0?height:1), ft);
+
+		glBindBuffer(GL_ARRAY_BUFFER, vbo_neb);
+		glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)neb_v*8*sizeof(float),
+		             NEBV, GL_STREAM_DRAW);
+		glBindBuffer(GL_ARRAY_BUFFER, vbo_rib);
+		glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)rib_v*RIB_STRIDE*sizeof(float),
+		             RIB, GL_STREAM_DRAW);
+		glBindBuffer(GL_ARRAY_BUFFER, vbo_pts);
+		glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)pts_n*7*sizeof(float),
+		             PTS, GL_STREAM_DRAW);
+		glBindBuffer(GL_ARRAY_BUFFER, vbo_mist);
+		glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)mst_n*7*sizeof(float),
+		             MST, GL_STREAM_DRAW);
+	}
 
 	double t_cpu1 = stats_on ? now_ms() : 0.0;
 
@@ -1843,8 +1877,6 @@ void scene_draw(int width, int height, double t, float fade)
 		glUseProgram(P.neb);
 		glUniformMatrix4fv(P.n_mvp, 1, GL_FALSE, VP);
 		glBindBuffer(GL_ARRAY_BUFFER, vbo_neb);
-		glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)neb_v*8*sizeof(float),
-		             NEBV, GL_STREAM_DRAW);
 		for (int i = 0; i < 3; i++) glEnableVertexAttribArray((GLuint)i);
 		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 32, (void *)0);
 		glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 32, (void *)12);
@@ -1873,16 +1905,14 @@ void scene_draw(int width, int height, double t, float fade)
 		draw_quad();
 	}
 
-	draw_points(P.mist, P.m_mvp, P.m_scale, vbo_mist, MST, mst_n, height);
+	draw_points(P.mist, P.m_mvp, P.m_scale, vbo_mist, mst_n, height);
 
 	/* ribbons: geometry built once, drawn twice */
-	glBindBuffer(GL_ARRAY_BUFFER, vbo_rib);
-	glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)rib_v*RIB_STRIDE*sizeof(float),
-	             RIB, GL_STREAM_DRAW);
 	draw_ribbons(1.6f, 2.6f, 0.26f, 0.0f);   /* wide glow */
 	draw_ribbons(7.0f, 1.0f, 1.00f, 0.9f);   /* white-hot core */
 
-	draw_points(P.pts, P.p_mvp, P.p_scale, vbo_pts, PTS, pts_n, height);
+	draw_points(P.pts, P.p_mvp, P.p_scale, vbo_bg, N_BG, height);
+	draw_points(P.pts, P.p_mvp, P.p_scale, vbo_pts, pts_n, height);
 
 	/* --- glow and composite --- */
 	run_bloom();

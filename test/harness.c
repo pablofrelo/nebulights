@@ -12,7 +12,12 @@ int main(int argc, char **argv)
 
 	scene_reset_clock();
 	for (int i = 0; i < frames; i++) {
-		double t = (double)i * dt;
+		/* every minute: screensaver off and on again, as after input */
+		if (i > 0 && i % 3600 == 0) {
+			scene_fini();
+			scene_reset_clock();
+		}
+		double t = (double)(i % 3600) * dt;
 		float fade = t < 1.5 ? (float)(t / 1.5) : 1.0f;
 		/* like three monitors: alternating sizes */
 		scene_draw(1920, 1200, t, fade);
