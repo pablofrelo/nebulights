@@ -239,12 +239,15 @@ static void hsv(float h, float s, float v, float *out)
 }
 /* ---- 4x4 matrices, column-major as in OpenGL ------------------- */
 
-static void m_persp(float *m, float fovy, float asp, float zn, float zf)
+/* Off-centre perspective; edges given as tangents (l, r, b, t). With
+   several monitors each one gets its own slice of one shared frustum. */
+static void m_frustum(float *m, const float *w, float zn, float zf)
 {
-	float f = 1.0f / tanf(fovy * 0.5f);
 	memset(m, 0, 16 * sizeof(float));
-	m[0]  = f / asp;
-	m[5]  = f;
+	m[0]  = 2.0f / (w[1] - w[0]);
+	m[5]  = 2.0f / (w[3] - w[2]);
+	m[8]  = (w[1] + w[0]) / (w[1] - w[0]);
+	m[9]  = (w[3] + w[2]) / (w[3] - w[2]);
 	m[10] = (zf + zn) / (zn - zf);
 	m[11] = -1.0f;
 	m[14] = 2.0f * zf * zn / (zn - zf);
@@ -546,8 +549,10 @@ static struct group  *GR;
 static int  n_flyers = 0, n_groups = 0;
 static float *TRAIL;                 /* shared trail storage */
 
-/* view-projection matrix of the current frame — needed for entries */
-static float CUR_VP[16];
+/* view matrix and the edges of the whole view (all outputs) as
+   tangents — needed for entries */
+static float CUR_VIEW[16];
+static float CUR_ALL[4];
 static float CAM_EYE[3] = { 0.0f, 0.0f, 0.0f };
 static bool  vp_ready = false;
 
@@ -628,14 +633,16 @@ static bool on_screen(const float *p, float margin)
 	if (!vp_ready)
 		return false;
 
-	const float *m = CUR_VP;
-	float w = m[3]*p[0] + m[7]*p[1] + m[11]*p[2] + m[15];
-	if (w <= 0.05f)
+	const float *m = CUR_VIEW;
+	float d = -(m[2]*p[0] + m[6]*p[1] + m[10]*p[2] + m[14]);
+	if (d <= 0.05f)
 		return false;                 /* behind the camera = off-screen */
 
-	float x = m[0]*p[0] + m[4]*p[1] + m[8] *p[2] + m[12];
-	float y = m[1]*p[0] + m[5]*p[1] + m[9] *p[2] + m[13];
-	return fabsf(x) <= w*margin && fabsf(y) <= w*margin;
+	float x = (m[0]*p[0] + m[4]*p[1] + m[8]*p[2] + m[12]) / d;
+	float y = (m[1]*p[0] + m[5]*p[1] + m[9]*p[2] + m[13]) / d;
+	const float *a = CUR_ALL;
+	return fabsf(x - (a[0]+a[1])*0.5f) <= (a[1]-a[0])*0.5f*margin &&
+	       fabsf(y - (a[2]+a[3])*0.5f) <= (a[3]-a[2])*0.5f*margin;
 }
 
 /*
@@ -1531,12 +1538,12 @@ static void draw_quad(void)
 }
 
 static void draw_points(GLuint prog, GLint u_mvp, GLint u_scale,
-                        GLuint vbo, int n, int h)
+                        GLuint vbo, int n, float scale)
 {
 	if (n <= 0) return;
 	glUseProgram(prog);
 	glUniformMatrix4fv(u_mvp, 1, GL_FALSE, VP);
-	glUniform1f(u_scale, (float)h * 0.0042f);
+	glUniform1f(u_scale, scale);
 
 	glBindBuffer(GL_ARRAY_BUFFER, vbo);
 	for (int i = 0; i < 3; i++) glEnableVertexAttribArray((GLuint)i);
@@ -1773,8 +1780,24 @@ int scene_fps_cap(void)
 	return FPS_CAP;
 }
 
-void scene_draw(int width, int height, double t, float fade)
+#define HALF_FOV 0.61f   /* half of the vertical field of view, radians */
+
+void scene_draw(int width, int height, const float *view, const float *all,
+                double t, float fade)
 {
+	float asp = (float)width / (float)(height > 0 ? height : 1);
+	float whole[4] = { -asp, asp, -1.0f, 1.0f };
+	if (!view) view = whole;
+	if (!all)  all = view;
+
+	float th = tanf(HALF_FOV), win[4];
+	for (int i = 0; i < 4; i++) {
+		win[i] = view[i] * th;
+		CUR_ALL[i] = all[i] * th;
+	}
+	/* points keep the same size in the world on every monitor */
+	float pt_scale = (float)height / (win[3] - win[2]) * 0.00587f;
+
 	scene_init();
 	make_targets(width, height);
 
@@ -1799,13 +1822,12 @@ void scene_draw(int width, int height, double t, float fade)
 	float tgt[3] = { eye[0]+fwd[0]*10.0f, eye[1]+fwd[1]*10.0f, eye[2]+fwd[2]*10.0f };
 	static const float up[3] = { 0.0f, 0.0f, 1.0f };
 
-	float proj[16], view[16];
-	m_persp(proj, 1.22f, (float)width / (float)(height > 0 ? height : 1),
-	        0.15f, 300.0f);
-	m_lookat(view, eye, tgt, up);
-	m_mul(proj, view, VP);
+	float proj[16], vmat[16];
+	m_frustum(proj, win, 0.15f, 300.0f);
+	m_lookat(vmat, eye, tgt, up);
+	m_mul(proj, vmat, VP);
 
-	memcpy(CUR_VP, VP, sizeof(VP));
+	memcpy(CUR_VIEW, vmat, sizeof(vmat));
 	memcpy(CAM_EYE, eye, sizeof(eye));
 	vp_ready = true;
 
@@ -1846,7 +1868,7 @@ void scene_draw(int width, int height, double t, float fade)
 	if (step) {
 		build_points();
 		build_ribbons(eye);
-		build_nebulae(view, eye, proj[5], (float)width/(float)(height>0?height:1), ft);
+		build_nebulae(vmat, eye, proj[5], asp, ft);
 
 		glBindBuffer(GL_ARRAY_BUFFER, vbo_neb);
 		glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)neb_v*8*sizeof(float),
@@ -1905,14 +1927,14 @@ void scene_draw(int width, int height, double t, float fade)
 		draw_quad();
 	}
 
-	draw_points(P.mist, P.m_mvp, P.m_scale, vbo_mist, mst_n, height);
+	draw_points(P.mist, P.m_mvp, P.m_scale, vbo_mist, mst_n, pt_scale);
 
 	/* ribbons: geometry built once, drawn twice */
 	draw_ribbons(1.6f, 2.6f, 0.26f, 0.0f);   /* wide glow */
 	draw_ribbons(7.0f, 1.0f, 1.00f, 0.9f);   /* white-hot core */
 
-	draw_points(P.pts, P.p_mvp, P.p_scale, vbo_bg, N_BG, height);
-	draw_points(P.pts, P.p_mvp, P.p_scale, vbo_pts, pts_n, height);
+	draw_points(P.pts, P.p_mvp, P.p_scale, vbo_bg, N_BG, pt_scale);
+	draw_points(P.pts, P.p_mvp, P.p_scale, vbo_pts, pts_n, pt_scale);
 
 	/* --- glow and composite --- */
 	run_bloom();

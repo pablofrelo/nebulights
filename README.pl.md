@@ -40,6 +40,10 @@ i niczego nie chroni.**
 Wygaszacz musi wystartować, zanim kompozytor zgasi monitory albo
 zablokuje ekran, więc te czasy ustaw dłuższe niż `-t`.
 
+Przy kilku monitorach kamera jest jedna: każdy monitor pokazuje swój
+wycinek widoku, ułożony tak jak wyjścia w kompozytorze, więc wstęga,
+która wylatuje z jednego ekranu, wlatuje na sąsiedni.
+
 Usługa systemd (niri, Plasma i każda sesja z `graphical-session.target`):
 
     systemctl --user enable --now nebulights.service

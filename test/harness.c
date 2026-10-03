@@ -19,9 +19,13 @@ int main(int argc, char **argv)
 		}
 		double t = (double)(i % 3600) * dt;
 		float fade = t < 1.5 ? (float)(t / 1.5) : 1.0f;
-		/* like three monitors: alternating sizes */
-		scene_draw(1920, 1200, t, fade);
-		scene_draw(2560, 1440, t, fade);
+		/* two side by side, like a panorama */
+		static const float l[4] = { -3.56f, 0.0f, -1.0f, 1.0f };
+		static const float r[4] = { 0.0f, 3.56f, -1.0f, 1.0f };
+		static const float a[4] = { -3.56f, 3.56f, -1.0f, 1.0f };
+		scene_draw(2560, 1440, l, a, t, fade);
+		scene_draw(2560, 1440, r, a, t, fade);
+		scene_draw(1920, 1200, NULL, NULL, t, fade);
 	}
 	printf("%d frames (%d min) without failure\n", frames, minutes);
 	return 0;

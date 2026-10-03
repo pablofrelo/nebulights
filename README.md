@@ -46,6 +46,10 @@ the screen, so set those timeouts longer than `-t`. Once monitors are
 off, the compositor stops handing out frames and nebulights stops
 rendering by itself.
 
+With several monitors there is still one camera: each monitor shows its
+own slice of the view, arranged as in the compositor's output layout,
+so a ribbon leaving one screen enters the next.
+
 ### systemd user service
 
 Works with any session that starts `graphical-session.target` (niri,

@@ -9,6 +9,7 @@
 
 #include <errno.h>
 #include <getopt.h>
+#include <stdint.h>
 #include <poll.h>
 #include <signal.h>
 #include <stdbool.h>
@@ -45,6 +46,7 @@ struct output {
 
 	struct wl_output *wl_output;
 	uint32_t global_name;
+	int32_t x, y;        /* position in the compositor's layout */
 
 	/* alive only while the screensaver is active */
 	struct wl_surface *surface;
@@ -137,6 +139,43 @@ static const struct wl_callback_listener frame_listener = {
 	.done = frame_done,
 };
 
+/*
+ * One camera for all monitors: each shows its own slice of a shared
+ * view, laid out like the outputs in the compositor. The view is
+ * centred horizontally on the whole layout and vertically on the
+ * biggest monitor, which also sets the scale.
+ */
+static void output_view(struct output *o, float view[4], float all[4])
+{
+	struct output *p, *ref = NULL;
+	int32_t x0 = INT32_MAX, x1 = INT32_MIN, y0 = INT32_MAX, y1 = INT32_MIN;
+
+	wl_list_for_each(p, &o->v->outputs, link) {
+		if (!p->configured)
+			continue;
+		if (p->x < x0) x0 = p->x;
+		if (p->y < y0) y0 = p->y;
+		if (p->x + p->width  > x1) x1 = p->x + p->width;
+		if (p->y + p->height > y1) y1 = p->y + p->height;
+		if (!ref || (int64_t)p->width * p->height >
+		            (int64_t)ref->width * ref->height)
+			ref = p;
+	}
+
+	float half = (float)ref->height * 0.5f;
+	float cx = (float)(x0 + x1) * 0.5f;
+	float cy = (float)ref->y + half;
+
+	view[0] = ((float)o->x - cx) / half;
+	view[1] = ((float)(o->x + o->width) - cx) / half;
+	view[2] = (cy - (float)(o->y + o->height)) / half;
+	view[3] = (cy - (float)o->y) / half;
+	all[0] = ((float)x0 - cx) / half;
+	all[1] = ((float)x1 - cx) / half;
+	all[2] = (cy - (float)y1) / half;
+	all[3] = (cy - (float)y0) / half;
+}
+
 static void output_render(struct output *o)
 {
 	struct app *v = o->v;
@@ -153,7 +192,9 @@ static void output_render(struct output *o)
 	if (fade > 1.0f)
 		fade = 1.0f;
 
-	scene_draw(o->width, o->height, t, fade);
+	float view[4], all[4];
+	output_view(o, view, all);
+	scene_draw(o->width, o->height, view, all, t, fade);
 
 	int cap = scene_fps_cap();
 	if (cap > 0) {
@@ -415,6 +456,40 @@ static const struct wl_seat_listener seat_listener = {
 };
 
 /* ------------------------------------------------------------------ */
+/* output position                                                     */
+
+static void out_geometry(void *data, struct wl_output *wo, int32_t x, int32_t y,
+                         int32_t pw, int32_t ph, int32_t sub, const char *make,
+                         const char *model, int32_t transform)
+{
+	struct output *o = data;
+	(void)wo; (void)pw; (void)ph; (void)sub; (void)make; (void)model;
+	(void)transform;
+	o->x = x;
+	o->y = y;
+}
+static void out_mode(void *d, struct wl_output *wo, uint32_t f,
+                     int32_t w, int32_t h, int32_t r)
+{ (void)d; (void)wo; (void)f; (void)w; (void)h; (void)r; }
+static void out_done(void *d, struct wl_output *wo)
+{ (void)d; (void)wo; }
+static void out_scale(void *d, struct wl_output *wo, int32_t s)
+{ (void)d; (void)wo; (void)s; }
+static void out_name(void *d, struct wl_output *wo, const char *n)
+{ (void)d; (void)wo; (void)n; }
+static void out_desc(void *d, struct wl_output *wo, const char *n)
+{ (void)d; (void)wo; (void)n; }
+
+static const struct wl_output_listener output_listener = {
+	.geometry = out_geometry,
+	.mode = out_mode,
+	.done = out_done,
+	.scale = out_scale,
+	.name = out_name,
+	.description = out_desc,
+};
+
+/* ------------------------------------------------------------------ */
 /* registry                                                            */
 
 static void registry_global(void *data, struct wl_registry *reg, uint32_t name,
@@ -444,6 +519,7 @@ static void registry_global(void *data, struct wl_registry *reg, uint32_t name,
 		o->egl_surface = EGL_NO_SURFACE;
 		o->wl_output = wl_registry_bind(reg, name,
 			&wl_output_interface, version < 4 ? version : 4);
+		wl_output_add_listener(o->wl_output, &output_listener, o);
 		wl_list_insert(&v->outputs, &o->link);
 
 		if (v->active)
